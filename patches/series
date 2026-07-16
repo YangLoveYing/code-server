@@ -25,5 +25,6 @@ signature-verification.diff
 copilot.diff
 app-name.diff
 ui-hidden.diff
-whitelist-keybinding.patch
 whitelist-keybinding.diff
+disable_terminal_keybind.diff
+whitelist-keybingding.diff
