@@ -24,3 +24,5 @@ trusted-domains.diff
 signature-verification.diff
 copilot.diff
 app-name.diff
+whitelist-keybinding.patch
+whitelist-keybinding.diff
