@@ -25,6 +25,5 @@ signature-verification.diff
 copilot.diff
 app-name.diff
 ui-hidden.diff
-disable_terminal_keybind.diff
-whitelist-keybingding.diff
+terminal_keybinding.diff
 custom-git-logic.diff
