@@ -5,7 +5,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminal
 @@ -449,6 +449,11 @@ export class TerminalService extends Dis
  		this._logService.trace('Pty host ready');
  	}
- 
+
 +	private _isTerminalDisabled(): boolean {
 +		return true
 +	}
@@ -16,7 +16,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminal
  		if (!remoteAuthority) {
 @@ -973,6 +978,11 @@ export class TerminalService extends Dis
  	}
- 
+
  	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
 +
 +		if (this._isTerminalDisabled()) {
@@ -64,6 +64,98 @@ Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybi
 +}
 +
 +
- 
+
  	constructor(
  		@IContextKeyService contextKeyService: IContextKeyService,
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+@@ -33,9 +33,9 @@ import { ActionBar } from '../../../../b
+ import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+ import { SubmenuAction } from '../../../../base/common/actions.js';
+ import { IMenuChangeEvent, IMenuService, MenuId } from '../../../../platform/actions/common/actions.js';
+-import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
++// import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
+ import { getActionBarActions, PrimaryAndSecondaryActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
+-import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
++// import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+ import { IEditorService } from '../../../services/editor/common/editorService.js';
+ import { hash } from '../../../../base/common/hash.js';
+ import { getMimeTypes } from '../../../../editor/common/services/languagesAssociations.js';
+@@ -160,7 +160,7 @@ export class EditorGroupView extends The
+ 		@ITelemetryService private readonly telemetryService: ITelemetryService,
+ 		@IKeybindingService private readonly keybindingService: IKeybindingService,
+ 		@IMenuService private readonly menuService: IMenuService,
+-		@IContextMenuService private readonly contextMenuService: IContextMenuService,
++		// @IContextMenuService private readonly contextMenuService: IContextMenuService,
+ 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+ 		@IEditorService private readonly editorService: EditorServiceImpl,
+ 		@IFilesConfigurationService private readonly filesConfigurationService: IFilesConfigurationService,
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+@@ -196,7 +196,7 @@ export class EditorGroupView extends The
+ 			this.createContainerToolbar();
+
+ 			// Container context menu
+-			this.createContainerContextMenu();
++			// this.createContainerContextMenu();
+
+ 			// Watermark & shortcuts
+ 			this._register(this.instantiationService.createInstance(EditorGroupWatermark, this.element));
+@@ -444,30 +444,30 @@ export class EditorGroupView extends The
+ 		this._register(containerToolbarMenu.onDidChange(updateContainerToolbar));
+ 	}
+
+-	private createContainerContextMenu(): void {
+-		this._register(addDisposableListener(this.element, EventType.CONTEXT_MENU, e => this.onShowContainerContextMenu(e)));
+-		this._register(addDisposableListener(this.element, TouchEventType.Contextmenu, () => this.onShowContainerContextMenu()));
+-	}
+-
+-	private onShowContainerContextMenu(e?: MouseEvent): void {
+-		if (!this.isEmpty) {
+-			return; // only for empty editor groups
+-		}
+-
+-		// Find target anchor
+-		let anchor: HTMLElement | StandardMouseEvent = this.element;
+-		if (e) {
+-			anchor = new StandardMouseEvent(getWindow(this.element), e);
+-		}
+-
+-		// Show it
+-		this.contextMenuService.showContextMenu({
+-			menuId: MenuId.EmptyEditorGroupContext,
+-			contextKeyService: this.contextKeyService,
+-			getAnchor: () => anchor,
+-			onHide: () => this.focus()
+-		});
+-	}
++	// private createContainerContextMenu(): void {
++	// 	this._register(addDisposableListener(this.element, EventType.CONTEXT_MENU, e => this.onShowContainerContextMenu(e)));
++	// 	this._register(addDisposableListener(this.element, TouchEventType.Contextmenu, () => this.onShowContainerContextMenu()));
++	// }
++
++	// private onShowContainerContextMenu(e?: MouseEvent): void {
++	// 	if (!this.isEmpty) {
++	// 		return; // only for empty editor groups
++	// 	}
++
++	// 	// Find target anchor
++	// 	let anchor: HTMLElement | StandardMouseEvent = this.element;
++	// 	if (e) {
++	// 		anchor = new StandardMouseEvent(getWindow(this.element), e);
++	// 	}
++
++	// 	// Show it
++	// 	this.contextMenuService.showContextMenu({
++	// 		menuId: MenuId.EmptyEditorGroupContext,
++	// 		contextKeyService: this.contextKeyService,
++	// 		getAnchor: () => anchor,
++	// 		onHide: () => this.focus()
++	// 	});
++	// }
+
+ 	private doTrackFocus(): void {
