@@ -1,8 +1,8 @@
-diff --git code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-index 152d14d7a9b..bea32c7b5b7 100644
---- code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 +++ code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-@@ -449,6 +449,11 @@ export class TerminalService extends Disposable implements ITerminalService {
+@@ -449,6 +449,11 @@ export class TerminalService extends Dis
  		this._logService.trace('Pty host ready');
  	}
  
@@ -14,7 +14,7 @@ index 152d14d7a9b..bea32c7b5b7 100644
  	private async _reconnectToRemoteTerminals(): Promise<void> {
  		const remoteAuthority = this._environmentService.remoteAuthority;
  		if (!remoteAuthority) {
-@@ -973,6 +978,11 @@ export class TerminalService extends Disposable implements ITerminalService {
+@@ -973,6 +978,11 @@ export class TerminalService extends Dis
  	}
  
  	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
@@ -26,11 +26,11 @@ index 152d14d7a9b..bea32c7b5b7 100644
  		// Await the initialization of available profiles as long as this is not a pty terminal or a
  		// local terminal in a remote workspace as profile won't be used in those cases and these
  		// terminals need to be launched before remote connections are established.
-diff --git code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
-index 5db49b2be12..03e2c378a0b 100644
---- code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
+Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
 +++ code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
-@@ -184,6 +184,36 @@ export class WorkbenchKeybindingService extends AbstractKeybindingService {
+@@ -184,6 +184,36 @@ export class WorkbenchKeybindingService
  		readonly contribution: KeybindingsSchemaContribution;
  	}> = [];
  	private readonly kbsJsonSchema: KeybindingsJsonSchema;

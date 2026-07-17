@@ -1,0 +1,284 @@
+Index: code-server/lib/vscode/src/vs/editor/contrib/contextmenu/browser/contextmenu.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/editor/contrib/contextmenu/browser/contextmenu.ts
++++ code-server/lib/vscode/src/vs/editor/contrib/contextmenu/browser/contextmenu.ts
+@@ -9,22 +9,22 @@ import { IMouseEvent, IMouseWheelEvent }
+ import { ActionViewItem } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
+ import { IAnchor } from '../../../../base/browser/ui/contextview/contextview.js';
+ import { IAction, Separator, SubmenuAction } from '../../../../base/common/actions.js';
+-import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
++import { KeyCode } from '../../../../base/common/keyCodes.js';
+ import { ResolvedKeybinding } from '../../../../base/common/keybindings.js';
+ import { DisposableStore } from '../../../../base/common/lifecycle.js';
+ import { isIOS } from '../../../../base/common/platform.js';
+ import { ICodeEditor, IEditorMouseEvent, MouseTargetType } from '../../../browser/editorBrowser.js';
+-import { EditorAction, EditorContributionInstantiation, registerEditorAction, registerEditorContribution, ServicesAccessor } from '../../../browser/editorExtensions.js';
++//import { EditorAction, EditorContributionInstantiation, registerEditorAction, registerEditorContribution, ServicesAccessor } from '../../../browser/editorExtensions.js';
+ import { EditorOption } from '../../../common/config/editorOptions.js';
+ import { IEditorContribution, ScrollType } from '../../../common/editorCommon.js';
+-import { EditorContextKeys } from '../../../common/editorContextKeys.js';
++//import { EditorContextKeys } from '../../../common/editorContextKeys.js';
+ import { ITextModel } from '../../../common/model.js';
+ import * as nls from '../../../../nls.js';
+ import { IMenuService, MenuId, SubmenuItemAction } from '../../../../platform/actions/common/actions.js';
+ import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+ import { IContextMenuService, IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+ import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+-import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
++//import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+ import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+ import { IWorkspaceContextService, isStandaloneEditorWorkspace } from '../../../../platform/workspace/common/workspace.js';
+ 
+@@ -387,26 +387,26 @@ export class ContextMenuController imple
+ 		this._toDispose.dispose();
+ 	}
+ }
++//disable context menu in explorer
++// class ShowContextMenu extends EditorAction {
+ 
+-class ShowContextMenu extends EditorAction {
++// 	constructor() {
++// 		super({
++// 			id: 'editor.action.showContextMenu',
++// 			label: nls.localize2('action.showContextMenu.label', "Show Editor Context Menu"),
++// 			precondition: undefined,
++// 			kbOpts: {
++// 				kbExpr: EditorContextKeys.textInputFocus,
++// 				primary: KeyMod.Shift | KeyCode.F10,
++// 				weight: KeybindingWeight.EditorContrib
++// 			}
++// 		});
++// 	}
++
++// 	public run(accessor: ServicesAccessor, editor: ICodeEditor): void {
++// 		ContextMenuController.get(editor)?.showContextMenu();
++// 	}
++// }
+ 
+-	constructor() {
+-		super({
+-			id: 'editor.action.showContextMenu',
+-			label: nls.localize2('action.showContextMenu.label', "Show Editor Context Menu"),
+-			precondition: undefined,
+-			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
+-				primary: KeyMod.Shift | KeyCode.F10,
+-				weight: KeybindingWeight.EditorContrib
+-			}
+-		});
+-	}
+-
+-	public run(accessor: ServicesAccessor, editor: ICodeEditor): void {
+-		ContextMenuController.get(editor)?.showContextMenu();
+-	}
+-}
+-
+-registerEditorContribution(ContextMenuController.ID, ContextMenuController, EditorContributionInstantiation.BeforeFirstInteraction);
+-registerEditorAction(ShowContextMenu);
++// registerEditorContribution(ContextMenuController.ID, ContextMenuController, EditorContributionInstantiation.BeforeFirstInteraction);
++// registerEditorAction(ShowContextMenu);
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/editor/editor.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+@@ -10,9 +10,9 @@ import { IEditorFactoryRegistry, EditorE
+ import {
+ 	TextCompareEditorActiveContext, ActiveEditorPinnedContext, EditorGroupEditorsCountContext, ActiveEditorStickyContext, ActiveEditorAvailableEditorIdsContext,
+ 	EditorPartMultipleEditorGroupsContext, ActiveEditorDirtyContext, ActiveEditorGroupLockedContext, ActiveEditorCanSplitInGroupContext, SideBySideEditorActiveContext,
+-	EditorTabsVisibleContext, ActiveEditorLastInGroupContext, EditorPartMaximizedEditorGroupContext, MultipleEditorGroupsContext, InEditorZenModeContext,
++	EditorTabsVisibleContext, ActiveEditorLastInGroupContext, MultipleEditorGroupsContext, InEditorZenModeContext,
+ 	IsAuxiliaryWindowContext, ActiveCompareEditorCanSwapContext, MultipleEditorsSelectedInGroupContext, SplitEditorsVertically,
+-	IsSessionsWindowContext, ActiveCustomEditorDiffCanToggleLayoutContext, ActiveCustomEditorTextDiffContext, EditorPartModalContext
++	IsSessionsWindowContext, ActiveCustomEditorTextDiffContext
+ } from '../../../common/contextkeys.js';
+ import { SideBySideEditorInput, SideBySideEditorInputSerializer } from '../../../common/editor/sideBySideEditorInput.js';
+ import { TextResourceEditor } from './textResourceEditor.js';
+@@ -49,13 +49,13 @@ import {
+ } from './editorActions.js';
+ import {
+ 	CLOSE_EDITORS_AND_GROUP_COMMAND_ID, CLOSE_EDITORS_IN_GROUP_COMMAND_ID, CLOSE_EDITORS_TO_THE_RIGHT_COMMAND_ID, CLOSE_EDITOR_COMMAND_ID, CLOSE_EDITOR_GROUP_COMMAND_ID, CLOSE_OTHER_EDITORS_IN_GROUP_COMMAND_ID,
+-	CLOSE_PINNED_EDITOR_COMMAND_ID, CLOSE_SAVED_EDITORS_COMMAND_ID, KEEP_EDITOR_COMMAND_ID, PIN_EDITOR_COMMAND_ID, SHOW_EDITORS_IN_GROUP, SPLIT_EDITOR_DOWN, SPLIT_EDITOR_LEFT,
+-	SPLIT_EDITOR_RIGHT, SPLIT_EDITOR_UP, TOGGLE_KEEP_EDITORS_COMMAND_ID, UNPIN_EDITOR_COMMAND_ID, setup as registerEditorCommands, REOPEN_WITH_COMMAND_ID,
++	CLOSE_PINNED_EDITOR_COMMAND_ID, CLOSE_SAVED_EDITORS_COMMAND_ID, KEEP_EDITOR_COMMAND_ID, PIN_EDITOR_COMMAND_ID, SPLIT_EDITOR_DOWN, SPLIT_EDITOR_LEFT,
++	SPLIT_EDITOR_RIGHT, SPLIT_EDITOR_UP, UNPIN_EDITOR_COMMAND_ID, setup as registerEditorCommands, REOPEN_WITH_COMMAND_ID,
+ 	TOGGLE_LOCK_GROUP_COMMAND_ID, UNLOCK_GROUP_COMMAND_ID, SPLIT_EDITOR_IN_GROUP, JOIN_EDITOR_IN_GROUP, FOCUS_FIRST_SIDE_EDITOR, FOCUS_SECOND_SIDE_EDITOR, TOGGLE_SPLIT_EDITOR_IN_GROUP_LAYOUT, LOCK_GROUP_COMMAND_ID,
+-	SPLIT_EDITOR, TOGGLE_MAXIMIZE_EDITOR_GROUP, MOVE_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, MOVE_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID,
++	SPLIT_EDITOR, MOVE_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_INTO_NEW_WINDOW_COMMAND_ID, MOVE_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID, COPY_EDITOR_GROUP_INTO_NEW_WINDOW_COMMAND_ID,
+ 	NEW_EMPTY_EDITOR_WINDOW_COMMAND_ID, MOVE_EDITOR_INTO_RIGHT_GROUP, MOVE_EDITOR_INTO_LEFT_GROUP, MOVE_EDITOR_INTO_ABOVE_GROUP, MOVE_EDITOR_INTO_BELOW_GROUP
+ } from './editorCommands.js';
+-import { GOTO_NEXT_CHANGE, GOTO_PREVIOUS_CHANGE, TOGGLE_DIFF_IGNORE_TRIM_WHITESPACE, TOGGLE_DIFF_SIDE_BY_SIDE, DIFF_SWAP_SIDES } from './diffEditorCommands.js';
++import { GOTO_NEXT_CHANGE, GOTO_PREVIOUS_CHANGE, TOGGLE_DIFF_IGNORE_TRIM_WHITESPACE, DIFF_SWAP_SIDES } from './diffEditorCommands.js';
+ import { inQuickPickContext, getQuickNavigateHandler } from '../../quickaccess.js';
+ import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+ import { ContextKeyExpr, ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
+@@ -69,7 +69,7 @@ import { Codicon } from '../../../../bas
+ import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+ import { UntitledTextEditorInputSerializer, UntitledTextEditorWorkingCopyEditorHandler } from '../../../services/untitled/common/untitledTextEditorHandler.js';
+ import { DynamicEditorConfigurations } from './editorConfiguration.js';
+-import { ConfigureEditorAction, ConfigureEditorTabsAction, EditorActionsDefaultAction, EditorActionsTitleBarAction, HideEditorActionsAction, HideEditorTabsAction, ShowMultipleEditorTabsAction, ShowSingleEditorTabAction, ZenHideEditorTabsAction, ZenShowMultipleEditorTabsAction, ZenShowSingleEditorTabAction } from '../../actions/layoutActions.js';
++import { ConfigureEditorTabsAction, EditorActionsDefaultAction, EditorActionsTitleBarAction, HideEditorActionsAction, HideEditorTabsAction, ShowMultipleEditorTabsAction, ShowSingleEditorTabAction, ZenHideEditorTabsAction, ZenShowMultipleEditorTabsAction, ZenShowSingleEditorTabAction } from '../../actions/layoutActions.js';
+ import { ICommandAction } from '../../../../platform/action/common/action.js';
+ import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
+ import { getFontSnippets } from '../../../../base/browser/fonts.js';
+@@ -420,15 +420,15 @@ MenuRegistry.appendMenuItem(MenuId.Edito
+ MenuRegistry.appendMenuItem(MenuId.EditorSplitMoveSubmenu, { command: { id: JOIN_EDITOR_IN_GROUP, title: localize('joinInGroup', "Join in Group"), precondition: MultipleEditorsSelectedInGroupContext.negate() }, group: '3_split_in_group', order: 10, when: SideBySideEditorActiveContext });
+ 
+ // Editor Title Menu
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_DIFF_SIDE_BY_SIDE, title: localize('inlineView', "Inline View"), toggled: ContextKeyExpr.equals('config.diffEditor.renderSideBySide', false) }, group: '1_diff', order: 10, when: ContextKeyExpr.or(ContextKeyExpr.has('isInDiffEditor'), ActiveCustomEditorDiffCanToggleLayoutContext) });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: SHOW_EDITORS_IN_GROUP, title: localize('showOpenedEditors', "Show Opened Editors") }, group: '3_open', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: CLOSE_EDITORS_IN_GROUP_COMMAND_ID, title: localize('closeAll', "Close All") }, group: '5_close', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: CLOSE_SAVED_EDITORS_COMMAND_ID, title: localize('closeAllSaved', "Close Saved") }, group: '5_close', order: 20, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_KEEP_EDITORS_COMMAND_ID, title: localize('togglePreviewMode', "Enable Preview Editors"), toggled: ContextKeyExpr.has('config.workbench.editor.enablePreview') }, group: '7_settings', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_MAXIMIZE_EDITOR_GROUP, title: localize('maximizeGroup', "Maximize Group") }, group: '8_group_operations', order: 5, when: ContextKeyExpr.and(EditorPartMaximizedEditorGroupContext.negate(), EditorPartMultipleEditorGroupsContext) });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_MAXIMIZE_EDITOR_GROUP, title: localize('unmaximizeGroup', "Unmaximize Group") }, group: '8_group_operations', order: 5, when: EditorPartMaximizedEditorGroupContext });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_LOCK_GROUP_COMMAND_ID, title: localize('lockGroup', "Lock Group"), toggled: ActiveEditorGroupLockedContext }, group: '8_group_operations', order: 10, when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), EditorPartModalContext.toNegated()) /* already a primary action for aux windows, not applicable to modal editor */ });
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: ConfigureEditorAction.ID, title: localize('configureEditors', "Configure Editors") }, group: '9_configure', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_DIFF_SIDE_BY_SIDE, title: localize('inlineView', "Inline View"), toggled: ContextKeyExpr.equals('config.diffEditor.renderSideBySide', false) }, group: '1_diff', order: 10, when: ContextKeyExpr.or(ContextKeyExpr.has('isInDiffEditor'), ActiveCustomEditorDiffCanToggleLayoutContext) });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: SHOW_EDITORS_IN_GROUP, title: localize('showOpenedEditors', "Show Opened Editors") }, group: '3_open', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: CLOSE_EDITORS_IN_GROUP_COMMAND_ID, title: localize('closeAll', "Close All") }, group: '5_close', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: CLOSE_SAVED_EDITORS_COMMAND_ID, title: localize('closeAllSaved', "Close Saved") }, group: '5_close', order: 20, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_KEEP_EDITORS_COMMAND_ID, title: localize('togglePreviewMode', "Enable Preview Editors"), toggled: ContextKeyExpr.has('config.workbench.editor.enablePreview') }, group: '7_settings', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_MAXIMIZE_EDITOR_GROUP, title: localize('maximizeGroup', "Maximize Group") }, group: '8_group_operations', order: 5, when: ContextKeyExpr.and(EditorPartMaximizedEditorGroupContext.negate(), EditorPartMultipleEditorGroupsContext) });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_MAXIMIZE_EDITOR_GROUP, title: localize('unmaximizeGroup', "Unmaximize Group") }, group: '8_group_operations', order: 5, when: EditorPartMaximizedEditorGroupContext });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: TOGGLE_LOCK_GROUP_COMMAND_ID, title: localize('lockGroup', "Lock Group"), toggled: ActiveEditorGroupLockedContext }, group: '8_group_operations', order: 10, when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), EditorPartModalContext.toNegated()) /* already a primary action for aux windows, not applicable to modal editor */ });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { command: { id: ConfigureEditorAction.ID, title: localize('configureEditors', "Configure Editors") }, group: '9_configure', order: 10, when: EditorPartModalContext.toNegated() /* not applicable to modal editor */ });
+ 
+ function appendEditorToolItem(primary: ICommandAction, when: ContextKeyExpression | undefined, order: number, alternative?: ICommandAction, precondition?: ContextKeyExpression | undefined, enableInCompactMode?: boolean, enableInModalMode?: boolean): void {
+ 	const item: IMenuItem = {
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts
+@@ -32,28 +32,28 @@ interface WatermarkEntry {
+ const showChatContextKey = ContextKeyExpr.and(ContextKeyExpr.equals('chatSetupHidden', false), ContextKeyExpr.equals('chatSetupDisabledInWorkspace', false));
+ 
+ const openChat: WatermarkEntry = { text: localize('watermark.openChat', "Open Chat"), id: 'workbench.action.chat.open', when: { native: showChatContextKey, web: showChatContextKey } };
+-const showCommands: WatermarkEntry = { text: localize('watermark.showCommands', "Show All Commands"), id: 'workbench.action.showCommands' };
+-const gotoFile: WatermarkEntry = { text: localize('watermark.quickAccess', "Go to File"), id: 'workbench.action.quickOpen' };
+-const openFile: WatermarkEntry = { text: localize('watermark.openFile', "Open File"), id: 'workbench.action.files.openFile' };
+-const openFolder: WatermarkEntry = { text: localize('watermark.openFolder', "Open Folder"), id: 'workbench.action.files.openFolder' };
+-const openFileOrFolder: WatermarkEntry = { text: localize('watermark.openFileFolder', "Open File or Folder"), id: 'workbench.action.files.openFileFolder' };
+-const openRecent: WatermarkEntry = { text: localize('watermark.openRecent', "Open Recent"), id: 'workbench.action.openRecent' };
+-const newUntitledFile: WatermarkEntry = { text: localize('watermark.newUntitledFile', "New Untitled Text File"), id: 'workbench.action.files.newUntitledFile' };
+-const findInFiles: WatermarkEntry = { text: localize('watermark.findInFiles', "Find in Files"), id: 'workbench.action.findInFiles' };
+-const toggleTerminal: WatermarkEntry = { text: localize({ key: 'watermark.toggleTerminal', comment: ['toggle is a verb here'] }, "Toggle Terminal"), id: 'workbench.action.terminal.toggleTerminal', when: { web: ContextKeyExpr.equals('terminalProcessSupported', true) } };
+-const startDebugging: WatermarkEntry = { text: localize('watermark.startDebugging', "Start Debugging"), id: 'workbench.action.debug.start', when: { web: ContextKeyExpr.equals('terminalProcessSupported', true) } };
+-const openSettings: WatermarkEntry = { text: localize('watermark.openSettings', "Open Settings"), id: 'workbench.action.openSettings' };
++//const showCommands: WatermarkEntry = { text: localize('watermark.showCommands', "Show All Commands"), id: 'workbench.action.showCommands' };
++// const gotoFile: WatermarkEntry = { text: localize('watermark.quickAccess', "Go to File"), id: 'workbench.action.quickOpen' };
++// const openFile: WatermarkEntry = { text: localize('watermark.openFile', "Open File"), id: 'workbench.action.files.openFile' };
++// const openFolder: WatermarkEntry = { text: localize('watermark.openFolder', "Open Folder"), id: 'workbench.action.files.openFolder' };
++// const openFileOrFolder: WatermarkEntry = { text: localize('watermark.openFileFolder', "Open File or Folder"), id: 'workbench.action.files.openFileFolder' };
++// const openRecent: WatermarkEntry = { text: localize('watermark.openRecent', "Open Recent"), id: 'workbench.action.openRecent' };
++// const newUntitledFile: WatermarkEntry = { text: localize('watermark.newUntitledFile', "New Untitled Text File"), id: 'workbench.action.files.newUntitledFile' };
++// const findInFiles: WatermarkEntry = { text: localize('watermark.findInFiles', "Find in Files"), id: 'workbench.action.findInFiles' };
++// const toggleTerminal: WatermarkEntry = { text: localize({ key: 'watermark.toggleTerminal', comment: ['toggle is a verb here'] }, "Toggle Terminal"), id: 'workbench.action.terminal.toggleTerminal', when: { web: ContextKeyExpr.equals('terminalProcessSupported', true) } };
++// const startDebugging: WatermarkEntry = { text: localize('watermark.startDebugging', "Start Debugging"), id: 'workbench.action.debug.start', when: { web: ContextKeyExpr.equals('terminalProcessSupported', true) } };
++// const openSettings: WatermarkEntry = { text: localize('watermark.openSettings', "Open Settings"), id: 'workbench.action.openSettings' };
+ 
+ const baseEntries: WatermarkEntry[] = [
+ 	openChat,
+-	showCommands,
++	//showCommands,
+ ];
+ 
+ const emptyWindowEntries: WatermarkEntry[] = coalesce([
+ 	...baseEntries,
+-	openRecent,
+-	...(isMacintosh && !isWeb ? [openFileOrFolder] : [openFile, openFolder]),
+-	isMacintosh && !isWeb ? newUntitledFile : undefined, // fill in one more on macOS to get to 5 entries
++	//openRecent,
++	...(isMacintosh && !isWeb ? [] : []),
++	isMacintosh && !isWeb ? undefined : undefined, // fill in one more on macOS to get to 5 entries
+ ]);
+ 
+ const workspaceEntries: WatermarkEntry[] = [
+@@ -61,11 +61,11 @@ const workspaceEntries: WatermarkEntry[]
+ ];
+ 
+ const otherEntries: WatermarkEntry[] = [
+-	gotoFile,
+-	findInFiles,
+-	startDebugging,
+-	toggleTerminal,
+-	openSettings,
++	// gotoFile,
++	// findInFiles,
++	// startDebugging,
++	// toggleTerminal,
++	// openSettings,
+ ];
+ 
+ export class EditorGroupWatermark extends Disposable {
+Index: code-server/lib/vscode/src/vs/workbench/contrib/externalTerminal/browser/externalTerminal.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/externalTerminal/browser/externalTerminal.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/externalTerminal/browser/externalTerminal.contribution.ts
+@@ -6,7 +6,7 @@
+ import * as nls from '../../../../nls.js';
+ import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+ import { URI } from '../../../../base/common/uri.js';
+-import { MenuId, MenuRegistry, IMenuItem } from '../../../../platform/actions/common/actions.js';
++import { IMenuItem } from '../../../../platform/actions/common/actions.js';
+ import { ITerminalGroupService, ITerminalService as IIntegratedTerminalService } from '../../terminal/browser/terminal.js';
+ import { ResourceContextKey } from '../../../common/contextkeys.js';
+ import { IFileService } from '../../../../platform/files/common/files.js';
+@@ -94,7 +94,7 @@ registerOpenTerminalCommand(OPEN_IN_TERM
+ registerOpenTerminalCommand(OPEN_IN_INTEGRATED_TERMINAL_COMMAND_ID, 'integrated');
+ 
+ export class ExternalTerminalContribution extends Disposable implements IWorkbenchContribution {
+-	private _openInIntegratedTerminalMenuItem: IMenuItem;
++	// private _openInIntegratedTerminalMenuItem: IMenuItem;
+ 	private _openInTerminalMenuItem: IMenuItem;
+ 
+ 	constructor(
+@@ -102,24 +102,24 @@ export class ExternalTerminalContributio
+ 	) {
+ 		super();
+ 
+-		const shouldShowIntegratedOnLocal = ContextKeyExpr.and(
+-			ResourceContextKey.Scheme.isEqualTo(Schemas.file),
+-			ContextKeyExpr.or(ContextKeyExpr.equals('config.terminal.explorerKind', 'integrated'), ContextKeyExpr.equals('config.terminal.explorerKind', 'both')));
++		// const shouldShowIntegratedOnLocal = ContextKeyExpr.and(
++		// 	ResourceContextKey.Scheme.isEqualTo(Schemas.file),
++		// 	ContextKeyExpr.or(ContextKeyExpr.equals('config.terminal.explorerKind', 'integrated'), ContextKeyExpr.equals('config.terminal.explorerKind', 'both')));
+ 
+ 
+ 		const shouldShowExternalKindOnLocal = ContextKeyExpr.and(
+ 			ResourceContextKey.Scheme.isEqualTo(Schemas.file),
+ 			ContextKeyExpr.or(ContextKeyExpr.equals('config.terminal.explorerKind', 'external'), ContextKeyExpr.equals('config.terminal.explorerKind', 'both')));
+ 
+-		this._openInIntegratedTerminalMenuItem = {
+-			group: 'navigation',
+-			order: 30,
+-			command: {
+-				id: OPEN_IN_INTEGRATED_TERMINAL_COMMAND_ID,
+-				title: nls.localize('scopedConsoleAction.Integrated', "Open in Integrated Terminal")
+-			},
+-			when: ContextKeyExpr.or(shouldShowIntegratedOnLocal, ResourceContextKey.Scheme.isEqualTo(Schemas.vscodeRemote))
+-		};
++		// this._openInIntegratedTerminalMenuItem = {
++		// 	group: 'navigation',
++		// 	order: 30,
++		// 	command: {
++		// 		id: OPEN_IN_INTEGRATED_TERMINAL_COMMAND_ID,
++		// 		title: nls.localize('scopedConsoleAction.Integrated', "Open in Integrated Terminal")
++		// 	},
++		// 	when: ContextKeyExpr.or(shouldShowIntegratedOnLocal, ResourceContextKey.Scheme.isEqualTo(Schemas.vscodeRemote))
++		// };
+ 
+ 
+ 		this._openInTerminalMenuItem = {
+@@ -132,9 +132,9 @@ export class ExternalTerminalContributio
+ 			when: shouldShowExternalKindOnLocal
+ 		};
+ 
+-
+-		MenuRegistry.appendMenuItem(MenuId.ExplorerContext, this._openInTerminalMenuItem);
+-		MenuRegistry.appendMenuItem(MenuId.ExplorerContext, this._openInIntegratedTerminalMenuItem);
++		// 屏蔽右键打开的终端
++		// MenuRegistry.appendMenuItem(MenuId.ExplorerContext, this._openInTerminalMenuItem);
++		// MenuRegistry.appendMenuItem(MenuId.ExplorerContext, this._openInIntegratedTerminalMenuItem);
+ 
+ 		this._register(this._configurationService.onDidChangeConfiguration(e => {
+ 			if (e.affectsConfiguration('terminal.explorerKind') || e.affectsConfiguration('terminal.external')) {
