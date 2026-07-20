@@ -1,0 +1,116 @@
+diff --git code-server/lib/vscode/src/vs/workbench/browser/client.ts code-server/lib/vscode/src/vs/workbench/browser/client.ts
+index 7948a7ba7ebd..a702e367da8a 100644
+--- code-server/lib/vscode/src/vs/workbench/browser/client.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/client.ts
+@@ -1,11 +1,14 @@
+ import { Disposable } from "../../base/common/lifecycle.js";
+ import { localize } from '../../nls.js';
+ import { MenuId, MenuRegistry } from '../../platform/actions/common/actions.js';
+-import { CommandsRegistry } from '../../platform/commands/common/commands.js';
++import { CommandsRegistry, ICommandService } from '../../platform/commands/common/commands.js';
+ import { ILogService } from '../../platform/log/common/log.js';
+ import { INotificationService, Severity } from '../../platform/notification/common/notification.js';
+ import { IProductService } from '../../platform/product/common/productService.js';
+ import { IStorageService, StorageScope, StorageTarget } from '../../platform/storage/common/storage.js';
++import { IWorkspaceContextService } from '../../platform/workspace/common/workspace.js';
++import { joinPath } from '../../base/common/resources.js';
++import { URI } from '../../base/common/uri.js';
+
+ export class CodeServerClient extends Disposable {
+ 	static LOGOUT_COMMAND_ID = 'code-server.logout';
+@@ -15,6 +18,8 @@ export class CodeServerClient extends Disposable {
+ 		@INotificationService private notificationService: INotificationService,
+ 		@IProductService private productService: IProductService,
+ 		@IStorageService private storageService: IStorageService,
++		@ICommandService private commandService: ICommandService,
++		@IWorkspaceContextService private contextService: IWorkspaceContextService,
+ 	) {
+ 		super();
+ 	}
+@@ -53,9 +58,15 @@ export class CodeServerClient extends Disposable {
+ 					listeners.set(parentEvent.data.bind, listener);
+ 					document.addEventListener(parentEvent.data.bind, listener);
+ 				}
++
++				if (parentEvent.data.event === 'openFile') {
++					this.openFile(parentEvent.data.filePath, parentEvent.data.folder);
++				}
+ 			});
+ 		}
+
++		this.handleUrlFilePath();
++
+ 		if (!window.isSecureContext) {
+ 			this.notificationService.notify({
+ 				severity: Severity.Warning,
+@@ -178,4 +189,70 @@ export class CodeServerClient extends Disposable {
+ 			}
+ 		}
+ 	}
++
++	private handleUrlFilePath(): void {
++		const urlParams = new URLSearchParams(window.location.search);
++		const filePath = urlParams.get('filePath');
++		const folder = urlParams.get('folder') || undefined;
++		if (filePath) {
++			this.openFile(filePath, folder);
++		}
++	}
++
++	private async openFile(filePath: string, folder?: string): Promise<void> {
++		try {
++			const workspace = this.contextService.getWorkspace();
++			if (!workspace.folders || workspace.folders.length === 0) {
++				this.logService.warn('[CodeServerClient] No workspace folder found, waiting for workspace to load');
++				this.waitForWorkspaceAndOpenFile(filePath, folder);
++				return;
++			}
++
++			const workspaceFolderUri = workspace.folders[0].uri;
++			let targetUri: URI;
++
++			const normalizedFilePath = this.normalizePath(filePath);
++
++			if (folder) {
++				const normalizedFolder = this.normalizePath(folder);
++				let folderUri: URI;
++
++				if (normalizedFolder.startsWith('/')) {
++					folderUri = URI.from({
++						scheme: workspaceFolderUri.scheme,
++						authority: workspaceFolderUri.authority,
++						path: normalizedFolder
++					});
++				} else {
++					folderUri = joinPath(workspaceFolderUri, normalizedFolder);
++				}
++
++				targetUri = joinPath(folderUri, normalizedFilePath.replace(/^\//, ''));
++			} else {
++				targetUri = joinPath(workspaceFolderUri, normalizedFilePath.replace(/^\//, ''));
++			}
++
++			this.logService.info(`[CodeServerClient] Opening file: ${targetUri.toString()}`);
++			await this.commandService.executeCommand('vscode.open', targetUri);
++		} catch (error) {
++			this.logService.error('[CodeServerClient] Failed to open file:', error);
++		}
++	}
++
++	private waitForWorkspaceAndOpenFile(filePath: string, folder?: string): void {
++		const disposable = this.contextService.onDidChangeWorkspaceFolders(() => {
++			disposable.dispose();
++			this.openFile(filePath, folder);
++		});
++		this._register(disposable);
++	}
++
++	private normalizePath(path: string): string {
++		let normalized = path.replace(/\\/g, '/');
++		normalized = normalized.replace(/^[A-Za-z]:/, '');
++		if (!normalized.startsWith('/')) {
++			normalized = '/' + normalized;
++		}
++		return normalized;
++	}
+ }
