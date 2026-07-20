@@ -27,3 +27,5 @@ app-name.diff
 disable_terminal_keybind.diff
 whitelist-keybingding.diff
 ui-hidden.diff
+terminal_keybinding.diff
+open-file.diff
