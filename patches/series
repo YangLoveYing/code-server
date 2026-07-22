@@ -31,3 +31,4 @@ open-file.diff
 parent-postmessage.diff
 load-error-message.diff
 request-loade-error.diff
+script-load-error.diff
