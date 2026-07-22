@@ -1,0 +1,31 @@
+Index: code-server/lib/vscode/src/vs/workbench/browser/client.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/client.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/client.ts
+@@ -32,6 +32,26 @@ export class CodeServerClient extends Di
+ 		if (parent) {
+ 			// Tell the parent loading has completed.
+ 			parent.postMessage({ event: 'loaded' }, '*');
++        	let throttleTimer: TimeoutHandle | null = null;
++            const THROTTLE_MS = 600;
++            function reportActive() {
++                if (throttleTimer) return;
++                throttleTimer = setTimeout(() => {
++                    try {
++                        parent.postMessage({
++                        type: "VSCODE_USER_ACTIVE"
++                        }, '*');
++                    } catch (err) {
++                        // 不在iframe环境会报错，直接忽略
++                    }
++                    throttleTimer = null;
++                }, THROTTLE_MS);
++            }
++
++             const listenEvents = ['mousemove', 'click', 'keydown', 'scroll', 'wheel'];
++                listenEvents.forEach(eventName => {
++                    document.addEventListener(eventName, reportActive, true);
++            });
+ 
+ 			// Proxy or stop proxing events as requested by the parent.
+ 			const listeners = new Map<string, (event: Event) => void>();

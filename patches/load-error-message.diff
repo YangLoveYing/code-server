@@ -1,0 +1,15 @@
+Index: code-server/lib/vscode/src/vs/workbench/browser/workbench.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/workbench.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/workbench.ts
+@@ -182,6 +182,10 @@ export class Workbench extends Layout {
+ 
+ 			return instantiationService;
+ 		} catch (error) {
++			if (parent) {
++                parent.postMessage({ event: 'loaderror' }, '*');
++            }
++
+ 			onUnexpectedError(error);
+ 
+ 			throw error; // rethrow because this is a critical issue we cannot handle properly here

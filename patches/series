@@ -28,3 +28,5 @@ app-name.diff
 ui-hidden.diff
 terminal_keybinding.diff
 open-file.diff
+parent-postmessage.diff
+load-error-message.diff
