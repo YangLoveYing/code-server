@@ -9,7 +9,7 @@
   },
   "repository": "https://github.com/coder/code-server",
   "scripts": {
-    "build:code": "npm run build && npm run build:vscode && npm run release && npm run package",
+    "build:code": "npm install && npm run build && npm run build:vscode && npm run release && npm run package",
     "clean": "./ci/build/clean.sh",
     "build": "./ci/build/build-code-server.sh",
     "build:vscode": "VERSION=7.22.2 ./ci/build/build-vscode.sh",
