@@ -161,3 +161,17 @@ Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupV
  
  	private doTrackFocus(): void {
  
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/compositePart.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/compositePart.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/compositePart.ts
+@@ -350,6 +350,9 @@ export abstract class CompositePart<T ex
+ 		const menuIds = composite?.getMenuIds();
+ 		const primaryActions: IAction[] = composite?.getActions().slice(0) || [];
+ 		const secondaryActions: IAction[] = composite?.getSecondaryActions().slice(0) || [];
++		if(composite?.getId() === 'workbench.view.explorer') {
++			secondaryActions.length = 0; // clear secondary actions for explorer view
++		}
+ 
+ 		// Update context
+ 		if (this.toolBar) {
