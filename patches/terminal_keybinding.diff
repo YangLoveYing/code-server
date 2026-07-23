@@ -5,7 +5,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminal
 @@ -449,6 +449,11 @@ export class TerminalService extends Dis
  		this._logService.trace('Pty host ready');
  	}
-
+ 
 +	private _isTerminalDisabled(): boolean {
 +		return true
 +	}
@@ -16,7 +16,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminal
  		if (!remoteAuthority) {
 @@ -973,6 +978,11 @@ export class TerminalService extends Dis
  	}
-
+ 
  	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
 +
 +		if (this._isTerminalDisabled()) {
@@ -30,11 +30,16 @@ Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybi
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
 +++ code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
-@@ -184,6 +184,36 @@ export class WorkbenchKeybindingService
+@@ -184,6 +184,41 @@ export class WorkbenchKeybindingService
  		readonly contribution: KeybindingsSchemaContribution;
  	}> = [];
  	private readonly kbsJsonSchema: KeybindingsJsonSchema;
 +	protected override _dispatch(e: IKeyboardEvent,target: HTMLElement): boolean {
++	// 非组合操作
++    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
++        return super._dispatch(e,target);
++    }
++
 +    // 白名单允许的快捷键组合
 +    const allowSet = new Set<string>([
 +        'ctrl+keyc',
@@ -64,7 +69,7 @@ Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybi
 +}
 +
 +
-
+ 
  	constructor(
  		@IContextKeyService contextKeyService: IContextKeyService,
 Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
@@ -92,23 +97,19 @@ Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupV
  		@IFileDialogService private readonly fileDialogService: IFileDialogService,
  		@IEditorService private readonly editorService: EditorServiceImpl,
  		@IFilesConfigurationService private readonly filesConfigurationService: IFilesConfigurationService,
-Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
-===================================================================
---- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
-+++ code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
 @@ -196,7 +196,7 @@ export class EditorGroupView extends The
  			this.createContainerToolbar();
-
+ 
  			// Container context menu
 -			this.createContainerContextMenu();
 +			// this.createContainerContextMenu();
-
+ 
  			// Watermark & shortcuts
  			this._register(this.instantiationService.createInstance(EditorGroupWatermark, this.element));
 @@ -444,30 +444,30 @@ export class EditorGroupView extends The
  		this._register(containerToolbarMenu.onDidChange(updateContainerToolbar));
  	}
-
+ 
 -	private createContainerContextMenu(): void {
 -		this._register(addDisposableListener(this.element, EventType.CONTEXT_MENU, e => this.onShowContainerContextMenu(e)));
 -		this._register(addDisposableListener(this.element, TouchEventType.Contextmenu, () => this.onShowContainerContextMenu()));
@@ -157,5 +158,6 @@ Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupV
 +	// 		onHide: () => this.focus()
 +	// 	});
 +	// }
-
+ 
  	private doTrackFocus(): void {
+ 

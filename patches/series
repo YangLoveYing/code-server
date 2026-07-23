@@ -26,7 +26,7 @@ signature-verification.diff
 copilot.diff
 app-name.diff
 ui-hidden.diff
-terminal_keybinding.diff
 open-file.diff
 parent-postmessage.diff
 script-load-error.diff
+terminal_keybinding.diff
