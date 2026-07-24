@@ -1,0 +1,20 @@
+Index: code-server/lib/vscode/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
+@@ -57,11 +57,11 @@ import { registerCreatePluginAction } fr
+ export function registerChatContextActions(): DisposableStore {
+ 	const store = new DisposableStore();
+ 	store.add(registerAction2(AttachContextAction));
+-	store.add(registerAction2(AttachFileToChatAction));
+-	store.add(registerAction2(AttachFolderToChatAction));
+-	store.add(registerAction2(AttachSelectionToChatAction));
++	// store.add(registerAction2(AttachFileToChatAction));
++	// store.add(registerAction2(AttachFolderToChatAction));
++	// store.add(registerAction2(AttachSelectionToChatAction));
+ 	store.add(registerAction2(AttachSearchResultAction));
+-	store.add(registerAction2(AttachPinnedEditorsToChatAction));
++	//store.add(registerAction2(AttachPinnedEditorsToChatAction));
+ 	store.add(registerCreatePluginAction());
+ 	registerPromptActions(); // TODO@jrieken: should also return a DisposableStore
+ 	return store;
