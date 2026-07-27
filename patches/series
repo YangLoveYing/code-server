@@ -27,3 +27,4 @@ app-name.diff
 ui-hidden.diff
 terminal_keybinding.diff
 custom-git-logic.diff
+catch-file-change.diff

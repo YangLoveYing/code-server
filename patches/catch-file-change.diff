@@ -1,0 +1,254 @@
+Index: code-server/lib/vscode/package-lock.json
+===================================================================
+--- code-server.orig/lib/vscode/package-lock.json
++++ code-server/lib/vscode/package-lock.json
+@@ -59,6 +59,7 @@
+         "katex": "^0.16.22",
+         "kerberos": "2.1.1",
+         "minimist": "^1.2.8",
++        "mysql2": "^3.23.1",
+         "native-is-elevated": "0.9.0",
+         "native-keymap": "^3.3.5",
+         "node-addon-api": "^6.0.0",
+@@ -5090,6 +5091,15 @@
+       "integrity": "sha512-d1W2aNSYcz/sxYO4pMGX9vq65qOTu0P800epMud+6cYYX0QcT7zyqcxec3VWzpgvdXo57UWmVbZpLMjX2m1I7Q==",
+       "license": "MIT"
+     },
++    "node_modules/aws-ssl-profiles": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/aws-ssl-profiles/-/aws-ssl-profiles-1.1.2.tgz",
++      "integrity": "sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 6.0.0"
++      }
++    },
+     "node_modules/axios": {
+       "version": "1.16.0",
+       "resolved": "https://registry.npmjs.org/axios/-/axios-1.16.0.tgz",
+@@ -6909,6 +6919,15 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/denque": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/denque/-/denque-2.1.0.tgz",
++      "integrity": "sha512-HVQE3AAb/pxF8fQAoiqpvg9i3evqug3hoiwakOyZAwJm+6vZehbkYXZ0l4JxS+I3QxM97v5aaRNhj8v5oBhekw==",
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=0.10"
++      }
++    },
+     "node_modules/depd": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
+@@ -9082,6 +9101,15 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/generate-function": {
++      "version": "2.3.1",
++      "resolved": "https://registry.npmjs.org/generate-function/-/generate-function-2.3.1.tgz",
++      "integrity": "sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==",
++      "license": "MIT",
++      "dependencies": {
++        "is-property": "^1.0.2"
++      }
++    },
+     "node_modules/generator-function": {
+       "version": "2.0.1",
+       "resolved": "https://registry.npmjs.org/generator-function/-/generator-function-2.0.1.tgz",
+@@ -11442,7 +11470,6 @@
+       "version": "0.7.2",
+       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.2.tgz",
+       "integrity": "sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "safer-buffer": ">= 2.1.2 < 3.0.0"
+@@ -12100,6 +12127,12 @@
+       "integrity": "sha512-+lP4/6lKUBfQjZ2pdxThZvLUAafmZb8OAxFb8XXtiQmS35INgr85hdOGoEs124ez1FCnZJt6jau/T+alh58QFQ==",
+       "dev": true
+     },
++    "node_modules/is-property": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/is-property/-/is-property-1.0.2.tgz",
++      "integrity": "sha512-Ks/IoX00TtClbGQr4TWXemAnktAQvYB7HzcCxDGqEZU6oCmb2INHuOoKxbtR+HFkmYWBKv/dOZtGRiAjDhj92g==",
++      "license": "MIT"
++    },
+     "node_modules/is-regex": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/is-regex/-/is-regex-1.2.1.tgz",
+@@ -13142,6 +13175,12 @@
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/long": {
++      "version": "5.3.2",
++      "resolved": "https://registry.npmjs.org/long/-/long-5.3.2.tgz",
++      "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==",
++      "license": "Apache-2.0"
++    },
+     "node_modules/loose-envify": {
+       "version": "1.4.0",
+       "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
+@@ -13187,6 +13226,21 @@
+         "es5-ext": "~0.10.2"
+       }
+     },
++    "node_modules/lru.min": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/lru.min/-/lru.min-1.1.4.tgz",
++      "integrity": "sha512-DqC6n3QQ77zdFpCMASA1a3Jlb64Hv2N2DciFGkO/4L9+q/IpIAuRlKOvCXabtRW6cQf8usbmM6BE/TOPysCdIA==",
++      "license": "MIT",
++      "engines": {
++        "bun": ">=1.0.0",
++        "deno": ">=1.30.0",
++        "node": ">=8.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wellwelwel"
++      }
++    },
+     "node_modules/make-dir": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/make-dir/-/make-dir-4.0.0.tgz",
+@@ -14012,6 +14066,40 @@
+         "node": ">= 0.10"
+       }
+     },
++    "node_modules/mysql2": {
++      "version": "3.23.1",
++      "resolved": "https://registry.npmjs.org/mysql2/-/mysql2-3.23.1.tgz",
++      "integrity": "sha512-tTuRnC7qCet2IOfSNMYZ5SwXuBnfvBPAcIA28P0gtruXyZlU1LMxA6uha32kYypoFgyYklMqhLWwt4laYwXR/Q==",
++      "license": "MIT",
++      "dependencies": {
++        "aws-ssl-profiles": "^1.1.2",
++        "denque": "^2.1.0",
++        "generate-function": "^2.3.1",
++        "iconv-lite": "^0.7.2",
++        "long": "^5.3.2",
++        "lru.min": "^1.1.4",
++        "named-placeholders": "^1.1.6",
++        "sql-escaper": "^1.5.1"
++      },
++      "engines": {
++        "node": ">= 8.0"
++      },
++      "peerDependencies": {
++        "@types/node": ">= 8"
++      }
++    },
++    "node_modules/named-placeholders": {
++      "version": "1.1.6",
++      "resolved": "https://registry.npmjs.org/named-placeholders/-/named-placeholders-1.1.6.tgz",
++      "integrity": "sha512-Tz09sEL2EEuv5fFowm419c1+a/jSMiBjI9gHxVLrVdbUkkNUUfjsVYs9pVZu5oCon/kmRh9TfLEObFtkVxmY0w==",
++      "license": "MIT",
++      "dependencies": {
++        "lru.min": "^1.1.0"
++      },
++      "engines": {
++        "node": ">=8.0.0"
++      }
++    },
+     "node_modules/nan": {
+       "version": "2.26.2",
+       "resolved": "https://registry.npmjs.org/nan/-/nan-2.26.2.tgz",
+@@ -17406,6 +17494,21 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/sql-escaper": {
++      "version": "1.5.1",
++      "resolved": "https://registry.npmjs.org/sql-escaper/-/sql-escaper-1.5.1.tgz",
++      "integrity": "sha512-4toX5E1fQbBrpfXidaHnF0669nkAdETeIPTs2SUjxxD7RRIs9ICG4gtpmfc68JCEKehsdwLFqBu9VlQqZ1P1gg==",
++      "license": "MIT",
++      "engines": {
++        "bun": ">=1.0.0",
++        "deno": ">=2.0.0",
++        "node": ">=12.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/mysqljs/sql-escaper?sponsor=1"
++      }
++    },
+     "node_modules/ssh2": {
+       "version": "1.17.0",
+       "resolved": "https://registry.npmjs.org/ssh2/-/ssh2-1.17.0.tgz",
+Index: code-server/lib/vscode/package.json
+===================================================================
+--- code-server.orig/lib/vscode/package.json
++++ code-server/lib/vscode/package.json
+@@ -143,6 +143,7 @@
+     "katex": "^0.16.22",
+     "kerberos": "2.1.1",
+     "minimist": "^1.2.8",
++    "mysql2": "^3.23.1",
+     "native-is-elevated": "0.9.0",
+     "native-keymap": "^3.3.5",
+     "node-addon-api": "^6.0.0",
+Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/serverServices.ts
++++ code-server/lib/vscode/src/vs/server/node/serverServices.ts
+@@ -9,6 +9,8 @@ import { Emitter, Event } from '../../ba
+ import { DisposableStore, toDisposable } from '../../base/common/lifecycle.js';
+ import { Schemas } from '../../base/common/network.js';
+ import * as path from '../../base/common/path.js';
++import { v4 as uuidv4 } from 'uuid';
++import mysql from 'mysql2/promise';
+ import { IURITransformer } from '../../base/common/uriIpc.js';
+ import { getMachineId, getSqmMachineId, getDevDeviceId } from '../../base/node/id.js';
+ import { Promises } from '../../base/node/pfs.js';
+@@ -108,6 +110,16 @@ import { SandboxHelperService } from '..
+ 
+ const eventPrefix = 'monacoworkbench';
+ 
++// ─── Database Config ─────────────────────────────
++const dbConfig = {
++	host: 'icpldev.tdsql.dbdns.cmbchina.cn',
++        port: 6666,
++        database: 'icpl',
++        user: 'app1',
++        password: 'mZ7#mYf7',
++};
++// ─────────────────────────────────────────────────
++
+ export async function setupServerServices(connectionToken: ServerConnectionToken, args: ServerParsedArgs, REMOTE_DATA_FOLDER: string, disposables: DisposableStore) {
+ 	const services = new ServiceCollection();
+ 	const socketServer = new SocketServer<RemoteAgentConnectionContext>();
+@@ -146,6 +158,32 @@ export async function setupServerService
+ 	services.set(IFileService, fileService);
+ 	fileService.registerProvider(Schemas.file, disposables.add(new DiskFileSystemProvider(logService)));
+ 
++    // ─── File Save Tracker ──────────────────────────
++    try {
++            const pool = mysql.createPool({
++                    host:     dbConfig.host,
++                    port:     dbConfig.port,
++                    database: dbConfig.database,
++                    user:     dbConfig.user,
++                    password: dbConfig.password,
++                    waitForConnections: true,
++                    connectionLimit: 5,
++                    charset: 'utf8mb4',
++            });
++            fileService.onDidRunOperation((event: any) => {
++                    if (event.operation === 2) {
++                            const fp = event.resource?.fsPath;
++                            if (fp && typeof fp === 'string') {
++                                    pool.execute('INSERT INTO backend_prompt (uuid, session_id, content, origin, type) VALUES (?, ?, ?, ?, ?)', [uuidv4(), 'default', `${fp} 文件内容发生变化`, 'code-server', 'fileChange'])
++                                            .catch((err: any) => { console.error('[FileTracker] DB error:', err.message); });
++                            }
++                    }
++            });
++    } catch (err: any) {
++            console.error('[FileTracker] Init error:', err?.message || String(err));
++    }
++    // ─── End File Save Tracker ──────────────────────
++
+ 	// URI Identity
+ 	const uriIdentityService = new UriIdentityService(fileService);
+ 	services.set(IUriIdentityService, uriIdentityService);
