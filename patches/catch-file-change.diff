@@ -10,7 +10,54 @@ Index: code-server/lib/vscode/package-lock.json
          "native-is-elevated": "0.9.0",
          "native-keymap": "^3.3.5",
          "node-addon-api": "^6.0.0",
-@@ -5090,6 +5091,15 @@
+@@ -68,6 +69,7 @@
+         "ssh2": "^1.16.0",
+         "tas-client": "0.3.1",
+         "undici": "^7.28.0",
++        "uuid": "^11.1.0",
+         "vscode-oniguruma": "1.7.0",
+         "vscode-regexpp": "^3.1.0",
+         "vscode-textmate": "^9.3.2",
+@@ -97,6 +99,7 @@
+         "@types/source-map-support": "^0.5.10",
+         "@types/ssh2": "^1.15.4",
+         "@types/trusted-types": "^2.0.7",
++        "@types/uuid": "^10.0.0",
+         "@types/vscode-notebook-renderer": "^1.72.0",
+         "@types/wicg-file-system-access": "^2023.10.7",
+         "@types/windows-foreground-love": "^0.3.0",
+@@ -1830,6 +1833,16 @@
+         "@microsoft/dev-tunnels-ssh-tcp": "^3.12.29"
+       }
+     },
++    "node_modules/@microsoft/dev-tunnels-connections/node_modules/uuid": {
++      "version": "3.4.0",
++      "resolved": "https://registry.npmjs.org/uuid/-/uuid-3.4.0.tgz",
++      "integrity": "sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==",
++      "deprecated": "uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).",
++      "license": "MIT",
++      "bin": {
++        "uuid": "bin/uuid"
++      }
++    },
+     "node_modules/@microsoft/dev-tunnels-connections/node_modules/vscode-jsonrpc": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-4.0.0.tgz",
+@@ -3152,6 +3165,13 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@types/uuid": {
++      "version": "10.0.0",
++      "resolved": "https://registry.npmjs.org/@types/uuid/-/uuid-10.0.0.tgz",
++      "integrity": "sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@types/vinyl": {
+       "version": "2.0.12",
+       "resolved": "https://registry.npmjs.org/@types/vinyl/-/vinyl-2.0.12.tgz",
+@@ -5090,6 +5110,15 @@
        "integrity": "sha512-d1W2aNSYcz/sxYO4pMGX9vq65qOTu0P800epMud+6cYYX0QcT7zyqcxec3VWzpgvdXo57UWmVbZpLMjX2m1I7Q==",
        "license": "MIT"
      },
@@ -26,7 +73,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/axios": {
        "version": "1.16.0",
        "resolved": "https://registry.npmjs.org/axios/-/axios-1.16.0.tgz",
-@@ -6909,6 +6919,15 @@
+@@ -6909,6 +6938,15 @@
        "dev": true,
        "license": "MIT"
      },
@@ -42,7 +89,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/depd": {
        "version": "2.0.0",
        "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
-@@ -9082,6 +9101,15 @@
+@@ -9082,6 +9120,15 @@
          "url": "https://github.com/sponsors/ljharb"
        }
      },
@@ -58,7 +105,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/generator-function": {
        "version": "2.0.1",
        "resolved": "https://registry.npmjs.org/generator-function/-/generator-function-2.0.1.tgz",
-@@ -11442,7 +11470,6 @@
+@@ -11442,7 +11489,6 @@
        "version": "0.7.2",
        "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.2.tgz",
        "integrity": "sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==",
@@ -66,7 +113,7 @@ Index: code-server/lib/vscode/package-lock.json
        "license": "MIT",
        "dependencies": {
          "safer-buffer": ">= 2.1.2 < 3.0.0"
-@@ -12100,6 +12127,12 @@
+@@ -12100,6 +12146,12 @@
        "integrity": "sha512-+lP4/6lKUBfQjZ2pdxThZvLUAafmZb8OAxFb8XXtiQmS35INgr85hdOGoEs124ez1FCnZJt6jau/T+alh58QFQ==",
        "dev": true
      },
@@ -79,7 +126,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/is-regex": {
        "version": "1.2.1",
        "resolved": "https://registry.npmjs.org/is-regex/-/is-regex-1.2.1.tgz",
-@@ -13142,6 +13175,12 @@
+@@ -13142,6 +13194,12 @@
          "url": "https://github.com/sponsors/sindresorhus"
        }
      },
@@ -92,7 +139,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/loose-envify": {
        "version": "1.4.0",
        "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
-@@ -13187,6 +13226,21 @@
+@@ -13187,6 +13245,21 @@
          "es5-ext": "~0.10.2"
        }
      },
@@ -114,7 +161,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/make-dir": {
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/make-dir/-/make-dir-4.0.0.tgz",
-@@ -14012,6 +14066,40 @@
+@@ -14012,6 +14085,40 @@
          "node": ">= 0.10"
        }
      },
@@ -155,7 +202,7 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/nan": {
        "version": "2.26.2",
        "resolved": "https://registry.npmjs.org/nan/-/nan-2.26.2.tgz",
-@@ -17406,6 +17494,21 @@
+@@ -17406,6 +17513,21 @@
          "node": ">=0.10.0"
        }
      },
@@ -177,6 +224,28 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/ssh2": {
        "version": "1.17.0",
        "resolved": "https://registry.npmjs.org/ssh2/-/ssh2-1.17.0.tgz",
+@@ -19130,13 +19252,16 @@
+       "integrity": "sha1-RQ1Nyfpw3nMnYvvS1KKJgUGaDM8= sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="
+     },
+     "node_modules/uuid": {
+-      "version": "3.4.0",
+-      "resolved": "https://registry.npmjs.org/uuid/-/uuid-3.4.0.tgz",
+-      "integrity": "sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==",
+-      "deprecated": "uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).",
++      "version": "11.1.1",
++      "resolved": "https://registry.npmjs.org/uuid/-/uuid-11.1.1.tgz",
++      "integrity": "sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==",
++      "funding": [
++        "https://github.com/sponsors/broofa",
++        "https://github.com/sponsors/ctavan"
++      ],
+       "license": "MIT",
+       "bin": {
+-        "uuid": "bin/uuid"
++        "uuid": "dist/esm/bin/uuid"
+       }
+     },
+     "node_modules/v8-to-istanbul": {
 Index: code-server/lib/vscode/package.json
 ===================================================================
 --- code-server.orig/lib/vscode/package.json
@@ -189,6 +258,22 @@ Index: code-server/lib/vscode/package.json
      "native-is-elevated": "0.9.0",
      "native-keymap": "^3.3.5",
      "node-addon-api": "^6.0.0",
+@@ -152,6 +153,7 @@
+     "ssh2": "^1.16.0",
+     "tas-client": "0.3.1",
+     "undici": "^7.28.0",
++    "uuid": "^11.1.0",
+     "vscode-oniguruma": "1.7.0",
+     "vscode-regexpp": "^3.1.0",
+     "vscode-textmate": "^9.3.2",
+@@ -181,6 +183,7 @@
+     "@types/source-map-support": "^0.5.10",
+     "@types/ssh2": "^1.15.4",
+     "@types/trusted-types": "^2.0.7",
++    "@types/uuid": "^10.0.0",
+     "@types/vscode-notebook-renderer": "^1.72.0",
+     "@types/wicg-file-system-access": "^2023.10.7",
+     "@types/windows-foreground-love": "^0.3.0",
 Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/server/node/serverServices.ts
@@ -236,7 +321,7 @@ Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
 +                    charset: 'utf8mb4',
 +            });
 +            fileService.onDidRunOperation((event: any) => {
-+                    if (event.operation === 2) {
++                    if (event.operation === 4 /* FileOperation.WRITE */) {
 +                            const fp = event.resource?.fsPath;
 +                            if (fp && typeof fp === 'string') {
 +                                    pool.execute('INSERT INTO backend_prompt (uuid, session_id, content, origin, type) VALUES (?, ?, ?, ?, ?)', [uuidv4(), 'default', `${fp} 文件内容发生变化`, 'code-server', 'fileChange'])
@@ -252,3 +337,21 @@ Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
  	// URI Identity
  	const uriIdentityService = new UriIdentityService(fileService);
  	services.set(IUriIdentityService, uriIdentityService);
+Index: code-server/lib/vscode/remote/package.json
+===================================================================
+--- code-server.orig/lib/vscode/remote/package.json
++++ code-server/lib/vscode/remote/package.json
+@@ -40,11 +40,13 @@
+     "katex": "^0.16.22",
+     "kerberos": "2.1.1",
+     "minimist": "^1.2.8",
++    "mysql2": "^3.23.1",
+     "node-addon-api": "^6.0.0",
+     "node-pty": "^1.2.0-beta.13",
+     "ssh2": "^1.16.0",
+     "tar": "^7.5.9",
+     "tas-client": "0.3.1",
++    "uuid": "^11.1.0",
+     "vscode-oniguruma": "1.7.0",
+     "vscode-regexpp": "^3.1.0",
+     "vscode-textmate": "^9.3.2",
