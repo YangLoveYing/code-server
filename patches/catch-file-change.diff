@@ -274,69 +274,6 @@ Index: code-server/lib/vscode/package.json
      "@types/vscode-notebook-renderer": "^1.72.0",
      "@types/wicg-file-system-access": "^2023.10.7",
      "@types/windows-foreground-love": "^0.3.0",
-Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
-===================================================================
---- code-server.orig/lib/vscode/src/vs/server/node/serverServices.ts
-+++ code-server/lib/vscode/src/vs/server/node/serverServices.ts
-@@ -9,6 +9,8 @@ import { Emitter, Event } from '../../ba
- import { DisposableStore, toDisposable } from '../../base/common/lifecycle.js';
- import { Schemas } from '../../base/common/network.js';
- import * as path from '../../base/common/path.js';
-+import { v4 as uuidv4 } from 'uuid';
-+import mysql from 'mysql2/promise';
- import { IURITransformer } from '../../base/common/uriIpc.js';
- import { getMachineId, getSqmMachineId, getDevDeviceId } from '../../base/node/id.js';
- import { Promises } from '../../base/node/pfs.js';
-@@ -108,6 +110,16 @@ import { SandboxHelperService } from '..
- 
- const eventPrefix = 'monacoworkbench';
- 
-+// ─── Database Config ─────────────────────────────
-+const dbConfig = {
-+	host: 'icpldev.tdsql.dbdns.cmbchina.cn',
-+        port: 6666,
-+        database: 'icpl',
-+        user: 'app1',
-+        password: 'mZ7#mYf7',
-+};
-+// ─────────────────────────────────────────────────
-+
- export async function setupServerServices(connectionToken: ServerConnectionToken, args: ServerParsedArgs, REMOTE_DATA_FOLDER: string, disposables: DisposableStore) {
- 	const services = new ServiceCollection();
- 	const socketServer = new SocketServer<RemoteAgentConnectionContext>();
-@@ -146,6 +158,32 @@ export async function setupServerService
- 	services.set(IFileService, fileService);
- 	fileService.registerProvider(Schemas.file, disposables.add(new DiskFileSystemProvider(logService)));
- 
-+    // ─── File Save Tracker ──────────────────────────
-+    try {
-+            const pool = mysql.createPool({
-+                    host:     dbConfig.host,
-+                    port:     dbConfig.port,
-+                    database: dbConfig.database,
-+                    user:     dbConfig.user,
-+                    password: dbConfig.password,
-+                    waitForConnections: true,
-+                    connectionLimit: 5,
-+                    charset: 'utf8mb4',
-+            });
-+            fileService.onDidRunOperation((event: any) => {
-+                    if (event.operation === 4 /* FileOperation.WRITE */) {
-+                            const fp = event.resource?.fsPath;
-+                            if (fp && typeof fp === 'string') {
-+                                    pool.execute('INSERT INTO backend_prompt (uuid, session_id, content, origin, type) VALUES (?, ?, ?, ?, ?)', [uuidv4(), 'default', `${fp} 文件内容发生变化`, 'code-server', 'fileChange'])
-+                                            .catch((err: any) => { console.error('[FileTracker] DB error:', err.message); });
-+                            }
-+                    }
-+            });
-+    } catch (err: any) {
-+            console.error('[FileTracker] Init error:', err?.message || String(err));
-+    }
-+    // ─── End File Save Tracker ──────────────────────
-+
- 	// URI Identity
- 	const uriIdentityService = new UriIdentityService(fileService);
- 	services.set(IUriIdentityService, uriIdentityService);
 Index: code-server/lib/vscode/remote/package.json
 ===================================================================
 --- code-server.orig/lib/vscode/remote/package.json
@@ -355,3 +292,62 @@ Index: code-server/lib/vscode/remote/package.json
      "vscode-oniguruma": "1.7.0",
      "vscode-regexpp": "^3.1.0",
      "vscode-textmate": "^9.3.2",
+Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+@@ -16,6 +16,29 @@ import { IServerEnvironmentService } fro
+ import { AbstractDiskFileSystemProviderChannel, AbstractSessionFileWatcher, ISessionFileWatcher } from '../../platform/files/node/diskFileSystemProviderServer.js';
+ import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
+ import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
++import { v4 as uuidv4 } from 'uuid';
++import mysql from 'mysql2/promise';
++
++// ─── Database Config ─────────────────────────────
++const dbConfig = {
++	host: 'icpldev.tdsql.dbdns.cmbchina.cn',
++	port: 6666,
++	database: 'icpl',
++	user: 'app1',
++	password: 'mZ7#mYf7',
++};
++
++const fileTrackerPool = mysql.createPool({
++	host:     dbConfig.host,
++	port:     dbConfig.port,
++	database: dbConfig.database,
++	user:     dbConfig.user,
++	password: dbConfig.password,
++	waitForConnections: true,
++	connectionLimit: 5,
++	charset: 'utf8mb4',
++});
++// ─────────────────────────────────────────────────
+ 
+ export class RemoteAgentFileSystemProviderChannel extends AbstractDiskFileSystemProviderChannel<RemoteAgentConnectionContext> {
+ 
+@@ -31,6 +54,24 @@ export class RemoteAgentFileSystemProvid
+ 		this._register(this.provider);
+ 	}
+ 
++	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
++
++	override call<TResult>(ctx: RemoteAgentConnectionContext, command: string, args: unknown[]): Promise<TResult> {
++		if (command === 'writeFile') {
++			const uriTransformer = this.getUriTransformer(ctx);
++			const _resource = args[0] as UriComponents;
++			const resource = this.transformIncoming(uriTransformer, _resource);
++			const fp = resource.fsPath;
++			if (fp && typeof fp === 'string' && RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
++				fileTrackerPool.execute(
++					'INSERT INTO backend_prompt (uuid, session_id, content, origin, type) VALUES (?, ?, ?, ?, ?)',
++					[uuidv4(), 'default', `${fp} 文件内容发生变化`, 'code-server', 'fileChange']
++				).catch((err: any) => { console.error('[FileTracker] DB error:', err.message); });
++			}
++		}
++		return super.call(ctx, command, args);
++	}
++
+ 	protected override getUriTransformer(ctx: RemoteAgentConnectionContext): IURITransformer {
+ 		let transformer = this.uriTransformerCache.get(ctx.remoteAuthority);
+ 		if (!transformer) {
