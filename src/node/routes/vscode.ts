@@ -7,12 +7,13 @@ import * as net from "net"
 import * as os from "os"
 import * as path from "path"
 import { logError } from "../../common/util"
-import { CodeArgs, toCodeArgs } from "../cli"
+import { AuthType, CodeArgs, toCodeArgs } from "../cli"
 import { isDevMode, vsRootPath } from "../constants"
 import { authenticated, ensureAuthenticated, ensureOrigin, redirect, replaceTemplates, self } from "../http"
 import { SocketProxyProvider } from "../socket"
 import { isFile } from "../util"
 import { type WebsocketRequest, Router as WsRouter } from "../wsRouter"
+import { authorizeFolderRequest } from "../xauth"
 
 export const router = express.Router()
 
@@ -126,6 +127,14 @@ router.get("/", ensureVSCodeLoaded, async (req, res, next) => {
     return redirect(req, res, "login", {
       to: to !== "/" ? to : undefined,
     })
+  }
+
+  // In XToken mode the folder must be authorized against x-service.  The
+  // last-opened and CLI-argument redirects are disabled since a workspace
+  // parameter would bypass the folder check.
+  if (req.args.auth === AuthType.XToken) {
+    await authorizeFolderRequest(req)
+    return next()
   }
 
   if (NO_FOLDER_OR_WORKSPACE_QUERY && !FOLDER_OR_WORKSPACE_WAS_CLOSED) {
