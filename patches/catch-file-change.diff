@@ -341,7 +341,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +			if (fp && typeof fp === 'string' && RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
 +				fileTrackerPool.execute(
 +					'INSERT INTO backend_prompt (uuid, session_id, content, origin, type) VALUES (?, ?, ?, ?, ?)',
-+					[uuidv4(), 'default', `${fp} 文件内容发生变化`, 'code-server', 'fileChange']
++					[uuidv4(), ctx.reconnectionToken || 'unknown', `${fp} 文件内容发生变化`, 'code-server', 'fileChange']
 +				).catch((err: any) => { console.error('[FileTracker] DB error:', err.message); });
 +			}
 +		}
@@ -351,3 +351,27 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  	protected override getUriTransformer(ctx: RemoteAgentConnectionContext): IURITransformer {
  		let transformer = this.uriTransformerCache.get(ctx.remoteAuthority);
  		if (!transformer) {
+Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
++++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
+@@ -759,7 +759,8 @@ export class ManagementPersistentConnect
+ 		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
+ 		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
+ 			remoteAuthority: remoteAuthority,
+-			clientId: clientId
++			clientId: clientId,
++			reconnectionToken: reconnectionToken
+ 		}, options.ipcLogger));
+ 	}
+ 
+Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
++++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
+@@ -37,4 +37,5 @@ export interface IRemoteAgentEnvironment
+ export interface RemoteAgentConnectionContext {
+ 	remoteAuthority: string;
+ 	clientId: string;
++	reconnectionToken?: string;
+ }
