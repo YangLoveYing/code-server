@@ -153,11 +153,13 @@ export const options: Options<Required<UserProvidedArgs>> = {
     type: "string",
     description:
       'JSON object mapping run-env to x-service hosts for x-token auth, e.g. {"dev":"http://x.dev:9090"}. ' +
-      "Can be written as a YAML map in the config file.",
+      "Hosts must include a protocol (http:// or https://). Can be written as a YAML map in the config file.",
   },
   "x-service-default-host": {
     type: "string",
-    description: "Fallback x-service host for x-token auth when run-env is not in x-service-hosts.",
+    description:
+      "Fallback x-service host for x-token auth when run-env is not in x-service-hosts. " +
+      "Must include a protocol (http:// or https://).",
   },
   "x-service-timeout": {
     type: "number",
@@ -715,11 +717,23 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
 
   args._ = getResolvedPathsFromArgs(args)
 
+  const xServiceHosts = parseXServiceHosts(args["x-service-hosts"])
+  const xServiceDefaultHost = args["x-service-default-host"] || "http://localhost:9090"
+  // x-service hosts must carry their own scheme; xauth.ts does not prepend one.
+  for (const [runEnv, host] of Object.entries(xServiceHosts)) {
+    if (!/^https?:\/\//.test(host)) {
+      throw new Error(`x-service host for run-env "${runEnv}" must include a protocol (http:// or https://)`)
+    }
+  }
+  if (!/^https?:\/\//.test(xServiceDefaultHost)) {
+    throw new Error("--x-service-default-host must include a protocol (http:// or https://)")
+  }
+
   return {
     ...args,
-    "x-service-hosts": parseXServiceHosts(args["x-service-hosts"]),
-    "x-service-default-host": args["x-service-default-host"] || "localhost:9090",
-    "x-service-timeout": args["x-service-timeout"] || 5000,
+    "x-service-hosts": xServiceHosts,
+    "x-service-default-host": xServiceDefaultHost,
+    "x-service-timeout": args["x-service-timeout"] || 10000,
     usingEnvPassword,
     usingEnvHashedPassword,
   } as DefaultedArgs // TODO: Technically no guarantee this is fulfilled.

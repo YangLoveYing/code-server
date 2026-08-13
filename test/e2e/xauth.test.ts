@@ -1,4 +1,5 @@
 import { once } from "events"
+import * as fs from "fs"
 import * as http from "http"
 import { AddressInfo } from "net"
 import type { Page } from "playwright"
@@ -16,7 +17,7 @@ const startMockXService = (artifactsPath: string): http.Server => {
       res.writeHead(401, { "Content-Type": "application/json" })
       return res.end(JSON.stringify({ returnCode: "AUT0001", data: {} }))
     }
-    const sessionId = decodeURIComponent((req.url || "").split("/")[2] || "")
+    const sessionId = decodeURIComponent((req.url || "").match(/\/api\/v1\/sessions\/([^/]+)\/detail/)?.[1] || "")
     if (sessionId === "sess-hang") {
       return // Never respond; the client should time out.
     }
@@ -49,12 +50,13 @@ describe("x-token auth", args, {}, () => {
   test.beforeAll(async () => {
     await clean("xauth")
     artifactsPath = await tmpdir("xauth")
+    await fs.promises.mkdir(`${artifactsPath}/sub`, { recursive: true })
     mockXService = startMockXService(artifactsPath)
     mockXService.listen(0, "127.0.0.1")
     await once(mockXService, "listening")
     const port = (mockXService.address() as AddressInfo).port
     // The args array is shared with the lazily-spawned code-server instance.
-    args.push(`--x-service-default-host=127.0.0.1:${port}`)
+    args.push(`--x-service-default-host=http://127.0.0.1:${port}`)
   })
 
   test.afterAll(async () => {
@@ -73,9 +75,9 @@ describe("x-token auth", args, {}, () => {
   }
 
   const sessionCookies = (token: string, sessionId: string): Record<string, string> => ({
-    "id-token": token,
-    "session-id": sessionId,
-    "run-env": "dev",
+    id_token: token,
+    session_id: sessionId,
+    run_env: "dev",
   })
 
   test("should reject a request without an id-token (401)", async ({ codeServer, page }) => {
@@ -85,17 +87,17 @@ describe("x-token auth", args, {}, () => {
   })
 
   test("should reject an expired id-token (401)", async ({ codeServer, page }) => {
-    const res = await get(codeServer, page, "/", { "id-token": EXPIRED_TOKEN })
+    const res = await get(codeServer, page, "/", { id_token: EXPIRED_TOKEN })
     expect(res.status()).toBe(401)
     expect(await res.text()).toContain("认证信息已过期")
   })
 
   test("should reject when the session cookies are missing (401)", async ({ codeServer, page }) => {
     const res = await get(codeServer, page, `/?folder=${encodeURIComponent(artifactsPath)}`, {
-      "id-token": VALID_TOKEN,
+      id_token: VALID_TOKEN,
     })
     expect(res.status()).toBe(401)
-    expect(await res.text()).toContain("缺少 session-id / run-env")
+    expect(await res.text()).toContain("缺少会话信息")
   })
 
   test("should reject a missing folder (400)", async ({ codeServer, page }) => {
@@ -137,15 +139,26 @@ describe("x-token auth", args, {}, () => {
     expect(await res.text()).toContain("会话不存在或已失效")
   })
 
-  test("should reject a folder mismatch (403)", async ({ codeServer, page }) => {
+  test("should reject a folder outside the session folder (403)", async ({ codeServer, page }) => {
     const res = await get(
       codeServer,
       page,
-      `/?folder=${encodeURIComponent(artifactsPath + "/other")}`,
+      `/?folder=${encodeURIComponent(artifactsPath + "-sibling")}`,
       sessionCookies(VALID_TOKEN, "sess-ok"),
     )
     expect(res.status()).toBe(403)
     expect(await res.text()).toContain("无权访问该目录")
+  })
+
+  test("should serve the editor for a subdirectory of the session folder", async ({ codeServer, page }) => {
+    const res = await get(
+      codeServer,
+      page,
+      `/?folder=${encodeURIComponent(artifactsPath + "/sub")}`,
+      sessionCookies(VALID_TOKEN, "sess-ok"),
+    )
+    expect(res.status()).toBe(200)
+    expect(await res.text()).toContain("/_static/")
   })
 
   test("should reject when the x-service does not respond (502)", async ({ codeServer, page }) => {

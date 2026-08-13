@@ -1,16 +1,16 @@
 # code-server x-token 认证鉴权设计
 
 日期：2026-08-13
-状态：已与需求方对齐，待实现
+状态：已与需求方对齐，已实现
 
 ## 1. 背景与目标
 
 内网定制 code-server，接入 x-service 会话体系，实现：
 
-1. 认证：请求携带 `id-token`（JWT），缺失、畸形或过期一律 401 + 报错信息。
-2. 鉴权（防水平越权）：访问 `/` 和 `/vscode` 根路径时，`folder` 参数必须非空，且与 x-service 查询到的会话 `artifactsPath` 严格相等，否则 403。
+1. 认证：请求携带 `id_token` cookie（JWT），缺失、畸形或过期一律 401 + 报错信息。
+2. 鉴权（防水平越权）：访问 `/` 和 `/vscode` 根路径时，`folder` 参数必须非空，且必须是 x-service 查询到的会话 `artifactsPath` 本身或其子目录，否则 403。
 
-x-service 会话查询接口：`GET http://{host}/session/{session-id}/detail`，header 携带 `id-token`（否则 401）。返回：
+x-service 会话查询接口：`GET {host}/api/v1/sessions/{session-id}/detail`（host 含协议），header 携带 `id-token`（否则 401）。返回：
 
 ```json
 {
@@ -28,11 +28,11 @@ x-service 会话查询接口：`GET http://{host}/session/{session-id}/detail`�
 | 与现有 password 认证的关系 | 完全替换：新增 `AuthType.XToken`，该模式下 password 逻辑不生效 |
 | 校验范围 | 仅 `/` 和 `/vscode`（含 WebSocket 升级）；`/_static`、`/healthz` 等保持公开（401 错误页自身依赖 `/_static` 资源） |
 | JWT 校验深度 | 仅解 payload + 验 `exp`，不验签（信任边界在 x-service，它用 token 鉴权） |
-| x-service host 配置 | 按 `run-env` cookie 映射 host 表；run-env 缺失或未命中时回退默认 host |
+| x-service host 配置 | 按 `run_env` cookie 映射 host 表；run_env 缺失或未命中时回退默认 host |
 | folder 缺失 / 为空 / 非绝对路径 | 400 Bad Request |
 | workspace 参数 / last-opened 重定向 | 新模式下禁用（workspace 参数 400；.code-workspace 可引用任意目录，放行会绕过校验） |
 | x-service 异常映射 | 返回 401 → 401；非 SUC0000 / 无 artifactsPath → 401；网络错误 / 超时 / 5xx → 502 |
-| folder 比对 | 双方 `path.normalize` + 去尾部斜杠后严格相等；子目录不放行 |
+| folder 比对 | 双方 `path.normalize` + 去尾部斜杠后，用 `path.relative` 判断 folder 为 artifactsPath 本身或其子目录；前缀相同的兄弟目录（如 /proj 与 /proj2）不放行 |
 | 错误响应格式 | 复用现有 `errorHandler` / `wsErrorHandler`（浏览器 HTML 错误页，XHR/WS 纯文本） |
 
 ## 3. 方案总览
@@ -64,17 +64,89 @@ export enum AuthType {
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `x-service-hosts` | string（JSON 对象，如 `{"dev":"http://x.dev:9090","st":"http://x.st:9090"}`） | `{}` | run-env → x-service host 映射 |
-| `x-service-default-host` | string | `localhost:9090` | run-env 缺失或未命中映射时的回退 host |
-| `x-service-timeout` | number（毫秒） | `5000` | 调用 x-service 的超时 |
+| `x-service-hosts` | string（JSON 对象，如 `{"dev":"http://x.dev:9090","st":"https://x.st:9090"}`） | `{}`（空 map） | run_env → x-service host 映射 |
+| `x-service-default-host` | string | `http://localhost:9090` | run_env 缺失或未命中映射时的回退 host |
+| `x-service-timeout` | number（毫秒） | `10000` | 调用 x-service 的超时 |
 
-配置通道（走既有机制）：
+⚠️ host **必须携带协议**（`http://` 或 `https://`）：代码不写死前缀，`fetchSessionDetail` 直接用 `${host}` 拼 URL（xauth.ts）。未带协议的 host 会在启动时直接报错（`setDefaults` 校验）。
 
-- config.yaml：可写原生 YAML map。需给 `parseConfigFile` 增加 object 值的特判（`JSON.stringify` 后拼进 argv，约 5 行）。
-- CLI：`--x-service-hosts='{"dev":"…"}'` JSON 字符串。
-- 环境变量：`X_SERVICE_HOSTS`、`X_SERVICE_DEFAULT_HOST`、`X_SERVICE_TIMEOUT`。code-server 的环境变量不是通用机制，需在 `setDefaults` 中按现有 `PASSWORD` 等模式逐个添加 `if` 处理。
+#### 4.2.1 三种配置通道
 
-在 `setDefaults` 阶段完成 `JSON.parse` 与校验（非法 JSON 启动时报错），归一为 `Record<string, string>`。
+三个配置项均可通过 CLI 参数、环境变量、config.yaml 配置，与 code-server 既有配置机制一致：
+
+**1. CLI 参数**（`parse` 解析 argv，entry.ts）：
+
+```bash
+code-server --auth=x-token \
+  --x-service-hosts='{"dev":"http://127.0.0.1:9999","prod":"http://x.prod:9090"}' \
+  --x-service-default-host=http://127.0.0.1:9090 \
+  --x-service-timeout=3000
+```
+
+**2. 环境变量**（`setDefaults` 中按 `PASSWORD` 等既有模式逐个 `if` 处理，cli.ts；变量非空才生效）：
+
+| 环境变量 | 对应配置项 |
+|---|---|
+| `X_SERVICE_HOSTS` | `x-service-hosts`（JSON 字符串） |
+| `X_SERVICE_DEFAULT_HOST` | `x-service-default-host` |
+| `X_SERVICE_TIMEOUT` | `x-service-timeout` |
+
+```bash
+X_SERVICE_HOSTS='{"dev":"http://127.0.0.1:9999"}' \
+X_SERVICE_DEFAULT_HOST=http://127.0.0.1:9090 \
+X_SERVICE_TIMEOUT=3000 \
+code-server --auth=x-token
+```
+
+**3. config.yaml**（默认 `~/.config/code-server/config.yaml`；可用 `--config <path>` 指定，或 `$CODE_SERVER_CONFIG` 覆盖路径）。`x-service-hosts` 可直接写原生 YAML map，`parseConfigFile` 会 `JSON.stringify` 后走统一解析，无需手写 JSON 字符串：
+
+```yaml
+auth: x-token
+x-service-hosts:
+  dev: http://127.0.0.1:9999
+  prod: http://x.prod:9090
+x-service-default-host: http://127.0.0.1:9090
+x-service-timeout: 3000
+```
+
+#### 4.2.2 优先级
+
+**环境变量 > CLI 参数 > config.yaml。**
+
+`entry.ts` 中 `setDefaults(cliArgs, configArgs)` 先 `Object.assign({}, configArgs, cliArgs)`（CLI 覆盖配置文件），随后环境变量按「非空才覆盖」规则最后写入（`setDefaults` 内的 `if (process.env.X_SERVICE_…)`），故最终生效顺序为 env > CLI > config。
+
+示例（config.yaml 中 timeout 为 8000）：
+
+```bash
+X_SERVICE_TIMEOUT=3000 code-server --x-service-timeout=9000
+# 最终 timeout = 3000：环境变量覆盖 CLI，CLI 覆盖 config.yaml
+```
+
+与 `password` / `hashed-password` / `github-auth` 不同（禁止 CLI 传入），这三个 `x-service-*` 参数三种通道均可配置。
+
+`setDefaults` 阶段完成 `JSON.parse` 与校验（`x-service-hosts` 非法 JSON 启动时报错），归一为 `Record<string, string>`。
+
+#### 4.2.3 各环境 x-service host
+
+| run_env | host |
+|---|---|
+| dev | `http://x-service.example.com` |
+| st | `http://x-service-st.example.com` |
+| oa | `http://x-service-oa.example.com` |
+| prd | `http://x-service-prd.example.com` |
+
+config.yaml 完整示例：
+
+```yaml
+auth: x-token
+x-service-hosts:
+  dev: http://x-service.example.com
+  st: http://x-service-st.example.com
+  oa: http://x-service-oa.example.com
+  prd: http://x-service-prd.example.com
+x-service-default-host: http://x-service.example.com
+x-service-timeout: 10000
+```
 
 ## 5. 认证组件 `src/node/xauth.ts`（新模块）
 
@@ -90,14 +162,18 @@ export enum AuthType {
 
 ### 5.2 `fetchSessionDetail(host, sessionId, idToken, timeout)`
 
-- `GET http://${host}/session/${encodeURIComponent(sessionId)}/detail`，header `id-token: <token>`，`AbortSignal.timeout(timeout)`。
+- `GET ${host}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`（host 含协议），header `id-token: <token>`，`AbortSignal.timeout(timeout)`。
 - `returnCode !== "SUC0000"` 或 `data.artifactsPath` 缺失 → 抛 `SessionNotFoundError`。
 - 网络错误 / 超时 → 抛 `UpstreamError`。
 - x-service 返回 401 → 抛 `TokenRejectedError`。
 
 ### 5.3 `authorizeFolder(folder, artifactsPath)`
 
-双方 `path.normalize` + 去尾部斜杠，严格相等。子目录不放行。
+双方 `path.normalize` + 去尾部斜杠后，用 `path.relative(artifactsPath, folder)` 判断：
+
+- 相对结果为 `""`（自身）→ 放行；
+- 相对结果不以 `..` 开头且非绝对路径（子目录）→ 放行；
+- 其余（兄弟目录、父目录）→ 不放行，403。
 
 ### 5.4 `authorizeFolderRequest(req)`（GET / 处理器调用）
 
@@ -106,8 +182,8 @@ export enum AuthType {
 1. folder 缺失 / 为空 → 400 `必须携带 folder 参数`
 2. folder 非绝对路径 → 400
 3. 携带 workspace 参数 → 400 `该认证模式不支持 workspace 参数`
-4. session-id / run-env cookie 缺失 → 401 `缺少 session-id / run-env`
-5. 按 run-env 查 hosts 表（未命中回退 `x-service-default-host`）→ `fetchSessionDetail`
+4. session_id / run_env cookie 缺失 → 401 `缺少会话信息`
+5. 按 run_env 查 hosts 表（未命中回退 `x-service-default-host`）→ `fetchSessionDetail`
 6. artifactsPath 与 folder 比对，不等 → 403 `无权访问该目录`
 
 ## 6. 路由接入与数据流
@@ -136,9 +212,9 @@ case AuthType.XToken:
 ### 6.4 数据流（一次成功页面加载）
 
 ```
-GET /?folder={artifactsPath} + cookies(run-env, session-id, id-token)
+GET /?folder={artifactsPath} + cookies(run_env, session_id, id_token)
  → cookieParser → common → vscode.router GET /
- → authenticated(): 验 id-token（解包 + exp，失败抛 401）
+ → authenticated(): 验 id_token（解包 + exp，失败抛 401）
  → authorizeFolderRequest(): 参数校验(400/401)
    → x-service 查会话（异常映射 401/502）→ 目录比对（403）
  → 原处理器 XToken 分支跳过重定向 → next()
@@ -156,18 +232,18 @@ GET /?folder={artifactsPath} + cookies(run-env, session-id, id-token)
 
 | 场景 | 状态码 | 信息 |
 |---|---|---|
-| 缺 id-token | 401 | `未提供 id-token` |
-| 缺 session-id / run-env | 401 | `缺少 session-id / run-env` |
-| token 畸形 | 401 | `id-token 格式无效` |
-| token 过期 | 401 | `id-token 已过期` |
-| x-service 返回 401 | 401 | `id-token 已被服务端拒绝` |
+| 缺 id_token | 401 | `未认证` |
+| 缺 session_id / run_env | 401 | `缺少会话信息` |
+| token 畸形 | 401 | `认证信息无效` |
+| token 过期 | 401 | `认证信息已过期` |
+| x-service 返回 401 | 401 | `认证信息已被拒绝` |
 | 会话不存在 / 非 SUC0000 / 无 artifactsPath | 401 | `会话不存在或已失效` |
 | folder 缺失 / 空 / 非绝对路径 | 400 | `必须携带 folder 参数` |
 | 携带 workspace 参数 | 400 | `该认证模式不支持 workspace 参数` |
 | 目录不匹配 | 403 | `无权访问该目录` |
 | x-service 网络错误 / 超时 / 5xx | 502 | `认证服务不可用，请稍后重试` |
 
-日志安全：x-service 调用失败记 `logger.warn/error`，只含 session-id、run-env、状态码，不记录 id-token 全文。
+日志安全：x-service 调用失败记 `logger.warn/error`，只含 session_id、run_env、状态码，不记录 id_token 全文。
 
 ## 8. 测试
 
@@ -175,7 +251,7 @@ GET /?folder={artifactsPath} + cookies(run-env, session-id, id-token)
 
 - `xauth.test.ts`：
   - `verifyIdToken`：缺失 / 畸形 / 未过期 / 过期边界；
-  - `authorizeFolder`：标准化、尾斜杠、子目录拒绝、相对路径；
+  - `authorizeFolder`：标准化、尾斜杠、自身/子目录放行、兄弟目录与父目录拒绝；
   - `fetchSessionDetail`（mock fetch）：x-service 401、非 SUC0000、缺 artifactsPath、网络错误、超时、正常返回。
 - `cli.test.ts` 增补：`x-service-hosts` JSON 解析、非法 JSON 启动报错、默认值。
 - 路由测试：XToken 模式下 `authenticated` 抛错分支、`GET /` 的 400/403 分支。
@@ -183,7 +259,7 @@ GET /?folder={artifactsPath} + cookies(run-env, session-id, id-token)
 ### 8.2 集成测试（`test/integration/`）
 
 - 起 mock x-service（Node http server，按 id-token header 返回构造响应），起 code-server `--auth=x-token`。
-- 断言：无 cookie → 401；过期 token → 401；无 folder → 400；带 workspace → 400；folder 不一致 → 403；一致 → 200；x-service 挂掉 → 502。
+- 断言：无 cookie → 401；过期 token → 401；无 folder → 400；带 workspace → 400；folder 为兄弟目录 → 403；folder 为会话目录本身 → 200；子目录 → 200；x-service 挂掉 → 502。
 
 ## 9. 不覆盖（YAGNI）
 

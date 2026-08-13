@@ -64,7 +64,7 @@ export const fetchSessionDetail = async (
 ): Promise<string> => {
   let response: Response
   try {
-    response = await fetch(`http://${host}/session/${encodeURIComponent(sessionId)}/detail`, {
+    response = await fetch(`${host.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`, {
       headers: { "id-token": idToken },
       signal: AbortSignal.timeout(timeout),
     })
@@ -90,12 +90,14 @@ export const fetchSessionDetail = async (
 }
 
 /**
- * Return true if folder matches artifactsPath after normalizing both (normalize
- * and strip trailing slashes).  Subdirectories do not match.
+ * Return true if folder is artifactsPath itself or one of its subdirectories,
+ * after normalizing both (normalize and strip trailing slashes).  Sibling
+ * directories with a common prefix (e.g. /proj vs /proj2) do not match.
  */
 export const authorizeFolder = (folder: string, artifactsPath: string): boolean => {
   const normalized = (p: string): string => path.normalize(p).replace(/\/+$/, "")
-  return normalized(folder) === normalized(artifactsPath)
+  const rel = path.relative(normalized(artifactsPath), normalized(folder))
+  return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel))
 }
 
 /**
@@ -111,10 +113,10 @@ export const authorizeFolderRequest = async (req: express.Request): Promise<void
     throw new HttpError("该认证模式不支持 workspace 参数", HttpCode.BadRequest)
   }
 
-  const sessionId = req.cookies["session-id"] as string | undefined
-  const runEnv = req.cookies["run-env"] as string | undefined
+  const sessionId = req.cookies["session_id"] as string | undefined
+  const runEnv = req.cookies["run_env"] as string | undefined
   if (!sessionId || !runEnv) {
-    throw new HttpError("缺少 session-id / run-env", HttpCode.Unauthorized)
+    throw new HttpError("缺少会话信息", HttpCode.Unauthorized)
   }
 
   const hosts = req.args["x-service-hosts"]
@@ -122,7 +124,7 @@ export const authorizeFolderRequest = async (req: express.Request): Promise<void
 
   let artifactsPath: string
   try {
-    artifactsPath = await fetchSessionDetail(host, sessionId, req.cookies["id-token"], req.args["x-service-timeout"])
+    artifactsPath = await fetchSessionDetail(host, sessionId, req.cookies["id_token"], req.args["x-service-timeout"])
   } catch (error) {
     if (error instanceof TokenRejectedError) {
       logger.warn(error.message, field("session-id", sessionId), field("run-env", runEnv))
@@ -149,7 +151,7 @@ export const authorizeFolderRequest = async (req: express.Request): Promise<void
  * failure.  Used by authenticated() in XToken mode.
  */
 export const assertXTokenAuthenticated = (req: express.Request): void => {
-  const result = verifyIdToken(req.cookies["id-token"])
+  const result = verifyIdToken(req.cookies["id_token"])
   if (result.ok) {
     return
   }
