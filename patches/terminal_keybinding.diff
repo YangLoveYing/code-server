@@ -1,8 +1,8 @@
-diff --git code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-index 152d14d7a9b..bea32c7b5b7 100644
---- code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 +++ code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-@@ -449,6 +449,11 @@ export class TerminalService extends Disposable implements ITerminalService {
+@@ -449,6 +449,11 @@ export class TerminalService extends Dis
  		this._logService.trace('Pty host ready');
  	}
  
@@ -14,7 +14,7 @@ index 152d14d7a9b..bea32c7b5b7 100644
  	private async _reconnectToRemoteTerminals(): Promise<void> {
  		const remoteAuthority = this._environmentService.remoteAuthority;
  		if (!remoteAuthority) {
-@@ -973,6 +978,11 @@ export class TerminalService extends Disposable implements ITerminalService {
+@@ -973,6 +978,11 @@ export class TerminalService extends Dis
  	}
  
  	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
@@ -26,15 +26,20 @@ index 152d14d7a9b..bea32c7b5b7 100644
  		// Await the initialization of available profiles as long as this is not a pty terminal or a
  		// local terminal in a remote workspace as profile won't be used in those cases and these
  		// terminals need to be launched before remote connections are established.
-diff --git code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
-index 5db49b2be12..03e2c378a0b 100644
---- code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
+Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
 +++ code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
-@@ -184,6 +184,36 @@ export class WorkbenchKeybindingService extends AbstractKeybindingService {
+@@ -184,6 +184,41 @@ export class WorkbenchKeybindingService
  		readonly contribution: KeybindingsSchemaContribution;
  	}> = [];
  	private readonly kbsJsonSchema: KeybindingsJsonSchema;
 +	protected override _dispatch(e: IKeyboardEvent,target: HTMLElement): boolean {
++	// 非组合操作
++    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
++        return super._dispatch(e,target);
++    }
++
 +    // 白名单允许的快捷键组合
 +    const allowSet = new Set<string>([
 +        'ctrl+keyc',
@@ -67,3 +72,106 @@ index 5db49b2be12..03e2c378a0b 100644
  
  	constructor(
  		@IContextKeyService contextKeyService: IContextKeyService,
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+@@ -33,9 +33,9 @@ import { ActionBar } from '../../../../b
+ import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+ import { SubmenuAction } from '../../../../base/common/actions.js';
+ import { IMenuChangeEvent, IMenuService, MenuId } from '../../../../platform/actions/common/actions.js';
+-import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
++// import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
+ import { getActionBarActions, PrimaryAndSecondaryActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
+-import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
++// import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+ import { IEditorService } from '../../../services/editor/common/editorService.js';
+ import { hash } from '../../../../base/common/hash.js';
+ import { getMimeTypes } from '../../../../editor/common/services/languagesAssociations.js';
+@@ -160,7 +160,7 @@ export class EditorGroupView extends The
+ 		@ITelemetryService private readonly telemetryService: ITelemetryService,
+ 		@IKeybindingService private readonly keybindingService: IKeybindingService,
+ 		@IMenuService private readonly menuService: IMenuService,
+-		@IContextMenuService private readonly contextMenuService: IContextMenuService,
++		// @IContextMenuService private readonly contextMenuService: IContextMenuService,
+ 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+ 		@IEditorService private readonly editorService: EditorServiceImpl,
+ 		@IFilesConfigurationService private readonly filesConfigurationService: IFilesConfigurationService,
+@@ -196,7 +196,7 @@ export class EditorGroupView extends The
+ 			this.createContainerToolbar();
+ 
+ 			// Container context menu
+-			this.createContainerContextMenu();
++			// this.createContainerContextMenu();
+ 
+ 			// Watermark & shortcuts
+ 			this._register(this.instantiationService.createInstance(EditorGroupWatermark, this.element));
+@@ -444,30 +444,30 @@ export class EditorGroupView extends The
+ 		this._register(containerToolbarMenu.onDidChange(updateContainerToolbar));
+ 	}
+ 
+-	private createContainerContextMenu(): void {
+-		this._register(addDisposableListener(this.element, EventType.CONTEXT_MENU, e => this.onShowContainerContextMenu(e)));
+-		this._register(addDisposableListener(this.element, TouchEventType.Contextmenu, () => this.onShowContainerContextMenu()));
+-	}
+-
+-	private onShowContainerContextMenu(e?: MouseEvent): void {
+-		if (!this.isEmpty) {
+-			return; // only for empty editor groups
+-		}
+-
+-		// Find target anchor
+-		let anchor: HTMLElement | StandardMouseEvent = this.element;
+-		if (e) {
+-			anchor = new StandardMouseEvent(getWindow(this.element), e);
+-		}
+-
+-		// Show it
+-		this.contextMenuService.showContextMenu({
+-			menuId: MenuId.EmptyEditorGroupContext,
+-			contextKeyService: this.contextKeyService,
+-			getAnchor: () => anchor,
+-			onHide: () => this.focus()
+-		});
+-	}
++	// private createContainerContextMenu(): void {
++	// 	this._register(addDisposableListener(this.element, EventType.CONTEXT_MENU, e => this.onShowContainerContextMenu(e)));
++	// 	this._register(addDisposableListener(this.element, TouchEventType.Contextmenu, () => this.onShowContainerContextMenu()));
++	// }
++
++	// private onShowContainerContextMenu(e?: MouseEvent): void {
++	// 	if (!this.isEmpty) {
++	// 		return; // only for empty editor groups
++	// 	}
++
++	// 	// Find target anchor
++	// 	let anchor: HTMLElement | StandardMouseEvent = this.element;
++	// 	if (e) {
++	// 		anchor = new StandardMouseEvent(getWindow(this.element), e);
++	// 	}
++
++	// 	// Show it
++	// 	this.contextMenuService.showContextMenu({
++	// 		menuId: MenuId.EmptyEditorGroupContext,
++	// 		contextKeyService: this.contextKeyService,
++	// 		getAnchor: () => anchor,
++	// 		onHide: () => this.focus()
++	// 	});
++	// }
+ 
+ 	private doTrackFocus(): void {
+ 
+Index: code-server/lib/vscode/src/vs/workbench/browser/parts/compositePart.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/parts/compositePart.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/parts/compositePart.ts
+@@ -350,6 +350,9 @@ export abstract class CompositePart<T ex
+ 		const menuIds = composite?.getMenuIds();
+ 		const primaryActions: IAction[] = composite?.getActions().slice(0) || [];
+ 		const secondaryActions: IAction[] = composite?.getSecondaryActions().slice(0) || [];
++		if(composite?.getId() === 'workbench.view.explorer') {
++			secondaryActions.length = 0; // clear secondary actions for explorer view
++		}
+ 
+ 		// Update context
+ 		if (this.toolBar) {

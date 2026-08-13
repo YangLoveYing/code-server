@@ -1,0 +1,48 @@
+Index: code-server/lib/vscode/src/vs/code/browser/workbench/workbench.html
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/code/browser/workbench/workbench.html
++++ code-server/lib/vscode/src/vs/code/browser/workbench/workbench.html
+@@ -3,6 +3,43 @@
+ <html>
+ 	<head>
+ 		<script>
++			// 劫持原生fetch（用于动态import、动态fetch加载的静态资源）
++			const originFetch = window.fetch;
++			window.fetch = async function(input, init) {
++			try {
++				const res = await originFetch(input, init);
++				if (!res.ok) {
++				window.parent?.postMessage({
++					type: 'static_resource_fail',
++					url: typeof input === 'string' ? input : input.url,
++					status: res.status
++				}, "*");
++				}
++				return res;
++			} catch (e) {
++				window.parent?.postMessage({
++				type: 'static_resource_error',
++				url: typeof input === 'string' ? input : input.url,
++				msg: e.message
++				}, "*");
++				throw e;
++			}
++			}
++
++			// 监听所有script、link标签加载失败事件
++			window.addEventListener('error', function(e) {
++			const target = e.target;
++			const tagName = target.tagName;
++			if (tagName === 'SCRIPT' || tagName === 'LINK') {
++				window.parent?.postMessage({
++				type: 'loaderror',
++				url: target.src || target.href,
++				tag: tagName
++				}, "*")
++			}
++			}, true)
++		</script>
++		<script>
+ 			performance.mark('code/didStartRenderer');
+ 		</script>
+ 		<meta charset="utf-8" />

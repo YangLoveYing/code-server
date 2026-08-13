@@ -1,0 +1,14 @@
+Index: code-server/lib/vscode/src/vs/workbench/services/request/browser/requestService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/request/browser/requestService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/request/browser/requestService.ts
+@@ -46,6 +46,9 @@ export class BrowserRequestService exten
+ 			}
+ 			return context;
+ 		} catch (error) {
++			if (parent) {
++				parent.postMessage({ event: 'loaderror' }, '*');
++			}
+ 			const connection = this.remoteAgentService.getConnection();
+ 			if (connection) {
+ 				return this._makeRemoteRequest(connection, options, token);

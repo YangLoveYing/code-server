@@ -1,0 +1,368 @@
+Index: code-server/lib/vscode/src/vs/workbench/services/clipboard/browser/clipboardService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/clipboard/browser/clipboardService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/clipboard/browser/clipboardService.ts
+@@ -3,14 +3,14 @@
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+-import { localize } from '../../../../nls.js';
++// import { localize } from '../../../../nls.js';
+ import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+ import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+ import { BrowserClipboardService as BaseBrowserClipboardService } from '../../../../platform/clipboard/browser/clipboardService.js';
+-import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+-import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+-import { Event } from '../../../../base/common/event.js';
+-import { DisposableStore } from '../../../../base/common/lifecycle.js';
++// import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
++// import { IOpenerService } from '../../../../platform/opener/common/opener.js';
++// import { Event } from '../../../../base/common/event.js';
++// import { DisposableStore } from '../../../../base/common/lifecycle.js';
+ import { IWorkbenchEnvironmentService } from '../../environment/common/environmentService.js';
+ import { ILogService } from '../../../../platform/log/common/log.js';
+ import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+@@ -19,8 +19,8 @@ import { getActiveWindow } from '../../.
+ export class BrowserClipboardService extends BaseBrowserClipboardService {
+ 
+ 	constructor(
+-		@INotificationService private readonly notificationService: INotificationService,
+-		@IOpenerService private readonly openerService: IOpenerService,
++		// @INotificationService private readonly notificationService: INotificationService,
++		// @IOpenerService private readonly openerService: IOpenerService,
+ 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
+ 		@ILogService logService: ILogService,
+ 		@ILayoutService layoutService: ILayoutService
+@@ -39,6 +39,7 @@ export class BrowserClipboardService ext
+ 
+ 	override async readText(type?: string): Promise<string> {
+ 		this.logService.trace('BrowserClipboardService#readText called with type:', type);
++		// console.log('BrowserClipboardService#readText called with type:', type);
+ 		if (!!this.environmentService.extensionTestsLocationURI && typeof type !== 'string') {
+ 			type = 'vscode-tests'; // force in-memory clipboard for tests to avoid permission issues
+ 		}
+@@ -50,34 +51,37 @@ export class BrowserClipboardService ext
+ 
+ 		try {
+ 			const readText = await getActiveWindow().navigator.clipboard.readText();
++			// console.log('BrowserClipboardService#readText with readText.length:', readText);
+ 			this.logService.trace('BrowserClipboardService#readText with readText.length:', readText.length);
+ 			return readText;
+ 		} catch (error) {
+-			return new Promise<string>(resolve => {
++			// return new Promise<string>(resolve => {
+ 
+-				// Inform user about permissions problem (https://github.com/microsoft/vscode/issues/112089)
+-				const listener = new DisposableStore();
+-				const handle = this.notificationService.prompt(
+-					Severity.Error,
+-					localize('clipboardError', "Unable to read from the browser's clipboard. Please make sure you have granted access for this website to read from the clipboard."),
+-					[{
+-						label: localize('retry', "Retry"),
+-						run: async () => {
+-							listener.dispose();
+-							resolve(await this.readText(type));
+-						}
+-					}, {
+-						label: localize('learnMore', "Learn More"),
+-						run: () => this.openerService.open('https://go.microsoft.com/fwlink/?linkid=2151362')
+-					}],
+-					{
+-						sticky: true
+-					}
+-				);
+-
+-				// Always resolve the promise once the notification closes
+-				listener.add(Event.once(handle.onDidClose)(() => resolve('')));
+-			});
++			// 	// Inform user about permissions problem (https://github.com/microsoft/vscode/issues/112089)
++			// 	const listener = new DisposableStore();
++			// 	const handle = this.notificationService.prompt(
++			// 		Severity.Error,
++			// 		localize('clipboardError', "Unable to read from the browser's clipboard. Please make sure you have granted access for this website to read from the clipboard."),
++			// 		[{
++			// 			label: localize('retry', "Retry"),
++			// 			run: async () => {
++			// 				listener.dispose();
++			// 				resolve(await this.readText(type));
++			// 			}
++			// 		}, {
++			// 			label: localize('learnMore', "Learn More"),
++			// 			run: () => this.openerService.open('https://go.microsoft.com/fwlink/?linkid=2151362')
++			// 		}],
++			// 		{
++			// 			sticky: true
++			// 		}
++			// 	);
++
++			// 	// Always resolve the promise once the notification closes
++			// 	listener.add(Event.once(handle.onDidClose)(() => resolve('')));
++			// });
++			this.logService.error(error);
++			return '';
+ 		}
+ 	}
+ }
+Index: code-server/lib/vscode/src/vs/workbench/contrib/outline/browser/outline.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/outline/browser/outline.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/outline/browser/outline.contribution.ts
+@@ -3,17 +3,17 @@
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+-import { localize, localize2 } from '../../../../nls.js';
+-import { IViewsRegistry, Extensions as ViewExtensions } from '../../../common/views.js';
+-import { OutlinePane } from './outlinePane.js';
++import { localize } from '../../../../nls.js';
++// import { IViewsRegistry, Extensions as ViewExtensions } from '../../../common/views.js';
++// import { OutlinePane } from './outlinePane.js';
+ import { Registry } from '../../../../platform/registry/common/platform.js';
+ import { IConfigurationRegistry, Extensions as ConfigurationExtensions, ConfigurationScope } from '../../../../platform/configuration/common/configurationRegistry.js';
+-import { VIEW_CONTAINER } from '../../files/browser/explorerViewlet.js';
+-import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+-import { Codicon } from '../../../../base/common/codicons.js';
+-import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
++// import { VIEW_CONTAINER } from '../../files/browser/explorerViewlet.js';
++// import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
++// import { Codicon } from '../../../../base/common/codicons.js';
++// import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+ import { OutlineConfigKeys } from '../../../services/outline/browser/outline.js';
+-import { IOutlinePane } from './outline.js';
++// import { IOutlinePane } from './outline.js';
+ 
+ // --- actions
+ 
+@@ -21,21 +21,21 @@ import './outlineActions.js';
+ 
+ // --- view
+ 
+-const outlineViewIcon = registerIcon('outline-view-icon', Codicon.symbolClass, localize('outlineViewIcon', 'View icon of the outline view.'));
+-
+-Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([{
+-	id: IOutlinePane.Id,
+-	name: localize2('name', "Outline"),
+-	containerIcon: outlineViewIcon,
+-	ctorDescriptor: new SyncDescriptor(OutlinePane),
+-	canToggleVisibility: true,
+-	canMoveView: true,
+-	hideByDefault: false,
+-	collapsed: true,
+-	order: 2,
+-	weight: 30,
+-	focusCommand: { id: 'outline.focus' }
+-}], VIEW_CONTAINER);
++//const outlineViewIcon = registerIcon('outline-view-icon', Codicon.symbolClass, localize('outlineViewIcon', 'View icon of the outline view.'));
++//禁用outline图标，避免与文件资源管理器图标冲突
++// Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([{
++// 	id: IOutlinePane.Id,
++// 	name: localize2('name', "Outline"),
++// 	containerIcon: outlineViewIcon,
++// 	ctorDescriptor: new SyncDescriptor(OutlinePane),
++// 	canToggleVisibility: true,
++// 	canMoveView: true,
++// 	hideByDefault: false,
++// 	collapsed: true,
++// 	order: 2,
++// 	weight: 30,
++// 	focusCommand: { id: 'outline.focus' }
++// }], VIEW_CONTAINER);
+ 
+ // --- configurations
+ 
+Index: code-server/lib/vscode/src/vs/workbench/contrib/timeline/browser/timeline.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/timeline/browser/timeline.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/timeline/browser/timeline.contribution.ts
+@@ -6,8 +6,8 @@
+ import { localize } from '../../../../nls.js';
+ import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+ import { Registry } from '../../../../platform/registry/common/platform.js';
+-import { IViewsRegistry, IViewDescriptor, Extensions as ViewExtensions } from '../../../common/views.js';
+-import { VIEW_CONTAINER } from '../../files/browser/explorerViewlet.js';
++import { IViewDescriptor } from '../../../common/views.js';
++// import { VIEW_CONTAINER } from '../../files/browser/explorerViewlet.js';
+ import { ITimelineService, TimelinePaneId } from '../common/timeline.js';
+ import { TimelineHasProviderContext } from '../common/timelineService.js';
+ import { TimelinePane } from './timelinePane.js';
+@@ -62,7 +62,7 @@ configurationRegistry.registerConfigurat
+ 	}
+ });
+ 
+-Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([new TimelinePaneDescriptor()], VIEW_CONTAINER);
++// Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([new TimelinePaneDescriptor()], VIEW_CONTAINER);
+ 
+ namespace OpenTimelineAction {
+ 
+Index: code-server/lib/vscode/src/vs/code/browser/workbench/workbench.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/code/browser/workbench/workbench.ts
++++ code-server/lib/vscode/src/vs/code/browser/workbench/workbench.ts
+@@ -3,6 +3,8 @@
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
++console.log('get cookie:', document.cookie);
++
+ import { isStandalone } from '../../../base/browser/browser.js';
+ import { addDisposableListener } from '../../../base/browser/dom.js';
+ import { mainWindow } from '../../../base/browser/window.js';
+Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
++++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
+@@ -411,12 +411,12 @@ export interface IAddressProvider<T exte
+ 	getAddress(): Promise<IAddress<T>>;
+ }
+ 
+-export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string): Promise<ManagementPersistentConnection> {
++export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string, sessionID?: string): Promise<ManagementPersistentConnection> {
+ 	return createInitialConnection(
+ 		options,
+ 		async (simpleOptions) => {
+ 			const { protocol } = await doConnectRemoteAgentManagement(simpleOptions, CancellationToken.None);
+-			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol);
++			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol, sessionID);
+ 		}
+ 	);
+ }
+@@ -755,11 +755,14 @@ export class ManagementPersistentConnect
+ 
+ 	public readonly client: Client<RemoteAgentConnectionContext>;
+ 
+-	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol) {
++	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol, sessionID?: string) {
+ 		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
++		console.log('33333 created with 11111111:', reconnectionToken, sessionID);
+ 		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
+ 			remoteAuthority: remoteAuthority,
+-			clientId: clientId
++			clientId: clientId,
++			sessionID: sessionID,
++			reconnectionToken: this.reconnectionToken
+ 		}, options.ipcLogger));
+ 	}
+ 
+@@ -798,7 +801,7 @@ function safeDisposeProtocolAndSocket(pr
+ function getErrorFromMessage(msg: any): Error | null {
+ 	if (msg && msg.type === 'error') {
+ 		const error = new Error(`Connection error: ${msg.reason}`);
+-		// eslint-disable-next-line local/code-no-any-casts
++
+ 		(<any>error).code = 'VSCODE_CONNECTION_ERROR';
+ 		return error;
+ 	}
+Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
++++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
+@@ -37,4 +37,6 @@ export interface IRemoteAgentEnvironment
+ export interface RemoteAgentConnectionContext {
+ 	remoteAuthority: string;
+ 	clientId: string;
++	reconnectionToken: string;
++	sessionID: string | undefined;
+ }
+Index: code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/webClientServer.ts
++++ code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+@@ -392,7 +392,7 @@ export class WebClientServer {
+ 				Object.assign(productConfiguration, productOverrides);
+ 			} catch (err) {/* Ignore Error */ }
+ 		}
+-
++		const cookies = cookie.parse(req.headers.cookie || '');
+ 		const workbenchWebConfiguration = {
+ 			remoteAuthority,
+ 			serverBasePath: basePath,
+@@ -408,10 +408,10 @@ export class WebClientServer {
+ 			folderUri: resolveWorkspaceURI(this._environmentService.args['default-folder']),
+ 			workspaceUri: resolveWorkspaceURI(this._environmentService.args['default-workspace']),
+ 			productConfiguration,
+-			callbackRoute: callbackRoute
++			callbackRoute: callbackRoute,
++			sessionID: cookies || req.headers.cookie,
+ 		};
+ 
+-		const cookies = cookie.parse(req.headers.cookie || '');
+ 		const locale = this._environmentService.args.locale || await getLocaleFromConfig(this._environmentService.argvResource.fsPath) || cookies['vscode.nls.locale'] || req.headers['accept-language']?.split(',')[0]?.toLowerCase() || 'en';
+ 		let WORKBENCH_NLS_BASE_URL: string | undefined;
+ 		let WORKBENCH_NLS_URL: string;
+Index: code-server/lib/vscode/src/vs/workbench/browser/web.api.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/web.api.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/web.api.ts
+@@ -164,6 +164,10 @@ export interface IWorkbenchConstructionO
+ 	readonly serverBasePath?: string;
+ 
+ 	/**
++	 *
++	 */
++	readonly sessionID?: string;
++	/**
+ 	 * The connection token to send to the server.
+ 	 */
+ 	readonly connectionToken?: string | Promise<string>;
+Index: code-server/lib/vscode/src/vs/workbench/services/remote/browser/remoteAgentService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/remote/browser/remoteAgentService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/remote/browser/remoteAgentService.ts
+@@ -17,6 +17,7 @@ import { IWorkbenchContribution, Workben
+ import { IHostService } from '../../host/browser/host.js';
+ import { IUserDataProfileService } from '../../userDataProfile/common/userDataProfile.js';
+ import { IRemoteSocketFactoryService } from '../../../../platform/remote/common/remoteSocketFactoryService.js';
++import { IBrowserWorkbenchEnvironmentService } from '../../environment/browser/environmentService.js';
+ 
+ export class RemoteAgentService extends AbstractRemoteAgentService implements IRemoteAgentService {
+ 
+@@ -27,9 +28,9 @@ export class RemoteAgentService extends
+ 		@IProductService productService: IProductService,
+ 		@IRemoteAuthorityResolverService remoteAuthorityResolverService: IRemoteAuthorityResolverService,
+ 		@ISignService signService: ISignService,
+-		@ILogService logService: ILogService
++		@ILogService logService: ILogService,
+ 	) {
+-		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService);
++		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService, (environmentService as IBrowserWorkbenchEnvironmentService).options?.sessionID);
+ 	}
+ }
+ 
+Index: code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
+@@ -35,11 +35,12 @@ export abstract class AbstractRemoteAgen
+ 		@IProductService productService: IProductService,
+ 		@IRemoteAuthorityResolverService private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
+ 		@ISignService signService: ISignService,
+-		@ILogService private readonly _logService: ILogService
++		@ILogService private readonly _logService: ILogService,
++		sessionID?: string,
+ 	) {
+ 		super();
+ 		if (this._environmentService.remoteAuthority) {
+-			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService));
++			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService, sessionID));
+ 		} else {
+ 			this._connection = null;
+ 		}
+@@ -166,7 +167,8 @@ class RemoteAgentConnection extends Disp
+ 		private readonly _remoteSocketFactoryService: IRemoteSocketFactoryService,
+ 		private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
+ 		private readonly _signService: ISignService,
+-		private readonly _logService: ILogService
++		private readonly _logService: ILogService,
++		private readonly _sessionID?: string,
+ 	) {
+ 		super();
+ 		this.remoteAuthority = remoteAuthority;
+@@ -240,7 +242,7 @@ class RemoteAgentConnection extends Disp
+ 		let connection: ManagementPersistentConnection;
+ 		const start = Date.now();
+ 		try {
+-			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`));
++			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`, this._sessionID));
+ 			this._managementConnection = connection;
+ 		} finally {
+ 			this._initialConnectionMs = Date.now() - start;
