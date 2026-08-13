@@ -226,7 +226,24 @@ Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnectio
  		}
  	);
  }
-@@ -798,7 +798,7 @@ function safeDisposeProtocolAndSocket(pr
+@@ -755,11 +755,14 @@ export class ManagementPersistentConnect
+ 
+ 	public readonly client: Client<RemoteAgentConnectionContext>;
+ 
+-	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol) {
++	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol, sessionID?: string) {
+ 		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
++		console.log('33333 created with 11111111:', reconnectionToken, sessionID);
+ 		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
+ 			remoteAuthority: remoteAuthority,
+-			clientId: clientId
++			clientId: clientId,
++			sessionID: sessionID,
++			reconnectionToken: this.reconnectionToken
+ 		}, options.ipcLogger));
+ 	}
+ 
+@@ -798,7 +801,7 @@ function safeDisposeProtocolAndSocket(pr
  function getErrorFromMessage(msg: any): Error | null {
  	if (msg && msg.type === 'error') {
  		const error = new Error(`Connection error: ${msg.reason}`);
@@ -340,3 +357,12 @@ Index: code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRe
  	) {
  		super();
  		this.remoteAuthority = remoteAuthority;
+@@ -240,7 +242,7 @@ class RemoteAgentConnection extends Disp
+ 		let connection: ManagementPersistentConnection;
+ 		const start = Date.now();
+ 		try {
+-			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`));
++			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`, this._sessionID));
+ 			this._managementConnection = connection;
+ 		} finally {
+ 			this._initialConnectionMs = Date.now() - start;
