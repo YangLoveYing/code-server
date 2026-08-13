@@ -1,0 +1,69 @@
+Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/serverServices.ts
++++ code-server/lib/vscode/src/vs/server/node/serverServices.ts
+@@ -55,11 +55,11 @@ import { RemoteAgentEnvironmentChannel }
+ import { RemoteAgentFileSystemProviderChannel } from './remoteFileSystemProviderServer.js';
+ import { ServerTelemetryChannel } from '../../platform/telemetry/common/remoteTelemetryChannel.js';
+ import { IServerTelemetryService, ServerNullTelemetryService, ServerTelemetryService } from '../../platform/telemetry/common/serverTelemetryService.js';
+-import { RemoteTerminalChannel } from './remoteTerminalChannel.js';
++// import { RemoteTerminalChannel } from './remoteTerminalChannel.js';
+ import { createURITransformer } from '../../base/common/uriTransformer.js';
+ import { ServerConnectionToken, ServerConnectionTokenType } from './serverConnectionToken.js';
+ import { ServerEnvironmentService, ServerParsedArgs } from './serverEnvironmentService.js';
+-import { REMOTE_TERMINAL_CHANNEL_NAME } from '../../workbench/contrib/terminal/common/remote/remoteTerminalChannel.js';
++// import { REMOTE_TERMINAL_CHANNEL_NAME } from '../../workbench/contrib/terminal/common/remote/remoteTerminalChannel.js';
+ import { REMOTE_FILE_SYSTEM_CHANNEL_NAME } from '../../workbench/services/remote/common/remoteFileSystemProviderClient.js';
+ import { ExtensionHostStatusService, IExtensionHostStatusService } from './extensionHostStatusService.js';
+ import { IExtensionsScannerService } from '../../platform/extensionManagement/common/extensionsScannerService.js';
+@@ -340,7 +340,7 @@ export async function setupServerService
+ 
+ 		socketServer.registerChannel(SANDBOX_HELPER_CHANNEL_NAME, new SandboxHelperChannel(new SandboxHelperService()));
+ 
+-		socketServer.registerChannel(REMOTE_TERMINAL_CHANNEL_NAME, new RemoteTerminalChannel(environmentService, logService, ptyHostService, productService, extensionManagementService, configurationService));
++		// socketServer.registerChannel(REMOTE_TERMINAL_CHANNEL_NAME, new RemoteTerminalChannel(environmentService, logService, ptyHostService, productService, extensionManagementService, configurationService));
+ 
+ 		const remoteExtensionsScanner = new RemoteExtensionsScannerService(instantiationService.createInstance(ExtensionManagementCLI, productService.extensionsForceVersionByQuality ?? [], logService), environmentService, userDataProfilesService, extensionsScannerService, logService, extensionGalleryService, languagePackService, extensionManagementService);
+ 		socketServer.registerChannel(RemoteExtensionsScannerChannelName, new RemoteExtensionsScannerChannel(remoteExtensionsScanner, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority)));
+Index: code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalMainContribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalMainContribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/terminal/browser/terminalMainContribution.ts
+@@ -16,6 +16,10 @@ import { IWorkbenchEnvironmentService }
+ import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+ import { IEmbedderTerminalService } from '../../../services/terminal/common/embedderTerminalService.js';
+ 
++import { Registry } from '../../../../platform/registry/common/platform.js';
++import { IViewContainersRegistry, Extensions as ViewContainerExtensions } from '../../../common/views.js';
++import { TERMINAL_VIEW_ID } from '../common/terminal.js';
++
+ /**
+  * The main contribution for the terminal contrib. This contains calls to other components necessary
+  * to set up the terminal but don't need to be tracked in the long term (where TerminalService would
+@@ -37,6 +41,15 @@ export class TerminalMainContribution ex
+ 	) {
+ 		super();
+ 
++		// Deregister the terminal view container so it doesn't appear in the panel
++		const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
++		const terminalViewContainer = viewContainerRegistry.get(TERMINAL_VIEW_ID);
++		if (terminalViewContainer) {
++			viewContainerRegistry.deregisterViewContainer(terminalViewContainer);
++		}
++		return;
++
++		/*
+ 		this._init(
+ 			editorResolverService,
+ 			embedderTerminalService,
+@@ -48,8 +61,10 @@ export class TerminalMainContribution ex
+ 			terminalGroupService,
+ 			terminalInstanceService
+ 		);
++	        */
+ 	}
+ 
++	// @ts-ignore: 预留初始化方法，暂未调用
+ 	private async _init(
+ 		editorResolverService: IEditorResolverService,
+ 		embedderTerminalService: IEmbedderTerminalService,
