@@ -30,7 +30,7 @@ Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybi
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
 +++ code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybindingService.ts
-@@ -184,6 +184,41 @@ export class WorkbenchKeybindingService
+@@ -184,6 +184,42 @@ export class WorkbenchKeybindingService
  		readonly contribution: KeybindingsSchemaContribution;
  	}> = [];
  	private readonly kbsJsonSchema: KeybindingsJsonSchema;
@@ -43,6 +43,7 @@ Index: code-server/lib/vscode/src/vs/workbench/services/keybinding/browser/keybi
 +    // 白名单允许的快捷键组合
 +    const allowSet = new Set<string>([
 +        'ctrl+keyc',
++        'ctrl+keya',
 +        'ctrl+keyv',
 +        'ctrl+keyx',
 +        'ctrl+keyz',
