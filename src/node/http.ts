@@ -20,6 +20,7 @@ import {
   escapeJSON,
   splitOnFirstEquals,
 } from "./util"
+import { assertXTokenAuthenticated } from "./xauth"
 
 /**
  * Base options included on every page.
@@ -131,6 +132,13 @@ export const authenticated = async (req: express.Request): Promise<boolean> => {
       }
 
       return await isCookieValid(isCookieValidArgs)
+    }
+    case AuthType.XToken: {
+      // The id-token is verified here (and not against x-service which is only
+      // consulted for the folder check on the root route).  Throwing instead of
+      // returning false avoids a redirect loop to /login.
+      assertXTokenAuthenticated(req)
+      return true
     }
     default: {
       throw new Error(`Unsupported auth type ${req.args.auth}`)

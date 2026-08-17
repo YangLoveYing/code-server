@@ -13,6 +13,7 @@ export enum Feature {
 export enum AuthType {
   Password = "password",
   None = "none",
+  XToken = "x-token",
 }
 
 export class Optional<T> {
@@ -97,6 +98,10 @@ export interface UserProvidedArgs extends UserProvidedCodeArgs {
   "abs-proxy-base-path"?: string
   i18n?: string
   "idle-timeout-seconds"?: number
+  // A JSON string on the command line but DefaultedArgs parses it into a map.
+  "x-service-hosts"?: string | Record<string, string>
+  "x-service-default-host"?: string
+  "x-service-timeout"?: number
   /* Positional arguments. */
   _?: string[]
 }
@@ -144,6 +149,22 @@ export type Options<T> = {
 
 export const options: Options<Required<UserProvidedArgs>> = {
   auth: { type: AuthType, description: "The type of authentication to use." },
+  "x-service-hosts": {
+    type: "string",
+    description:
+      'JSON object mapping run-env to x-service hosts for x-token auth, e.g. {"dev":"http://x.dev:9090"}. ' +
+      "Hosts must include a protocol (http:// or https://). Can be written as a YAML map in the config file.",
+  },
+  "x-service-default-host": {
+    type: "string",
+    description:
+      "Fallback x-service host for x-token auth when run-env is not in x-service-hosts. " +
+      "Must include a protocol (http:// or https://).",
+  },
+  "x-service-timeout": {
+    type: "number",
+    description: "Timeout in milliseconds for x-service session detail requests.",
+  },
   password: {
     type: "string",
     description: "The password for password authentication (can only be passed in via $PASSWORD or the config file).",
@@ -498,13 +519,13 @@ export const parse = (
 /**
  * Redact sensitive information from arguments for logging.
  */
-export const redactArgs = (args: UserProvidedArgs): UserProvidedArgs => {
+export const redactArgs = (args: UserProvidedArgs | DefaultedArgs): UserProvidedArgs => {
   return {
     ...args,
     password: args.password ? "<redacted>" : undefined,
     "hashed-password": args["hashed-password"] ? "<redacted>" : undefined,
     "github-auth": args["github-auth"] ? "<redacted>" : undefined,
-  }
+  } as UserProvidedArgs
 }
 
 /**
@@ -512,7 +533,7 @@ export const redactArgs = (args: UserProvidedArgs): UserProvidedArgs => {
  * args and defaulted args exists so we can tell the difference between end
  * values and what the user actually provided on the command line.
  */
-export interface DefaultedArgs extends ConfigArgs {
+export interface DefaultedArgs extends Omit<ConfigArgs, "x-service-hosts"> {
   auth: AuthType
   cert?: {
     value: string
@@ -526,6 +547,9 @@ export interface DefaultedArgs extends ConfigArgs {
   "extensions-dir": string
   "user-data-dir": string
   "session-socket": string
+  "x-service-hosts": Record<string, string>
+  "x-service-default-host": string
+  "x-service-timeout": number
   "app-name": string
   /* Positional arguments. */
   _: string[]
@@ -639,6 +663,18 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
     args["github-auth"] = process.env.GITHUB_TOKEN
   }
 
+  if (process.env.X_SERVICE_HOSTS) {
+    args["x-service-hosts"] = process.env.X_SERVICE_HOSTS
+  }
+
+  if (process.env.X_SERVICE_DEFAULT_HOST) {
+    args["x-service-default-host"] = process.env.X_SERVICE_DEFAULT_HOST
+  }
+
+  if (process.env.X_SERVICE_TIMEOUT) {
+    args["x-service-timeout"] = Number(process.env.X_SERVICE_TIMEOUT)
+  }
+
   if (process.env.CODE_SERVER_RECONNECTION_GRACE_TIME) {
     args["reconnection-grace-time"] = process.env.CODE_SERVER_RECONNECTION_GRACE_TIME
   }
@@ -681,8 +717,23 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
 
   args._ = getResolvedPathsFromArgs(args)
 
+  const xServiceHosts = parseXServiceHosts(args["x-service-hosts"])
+  const xServiceDefaultHost = args["x-service-default-host"] || "http://localhost:9090"
+  // x-service hosts must carry their own scheme; xauth.ts does not prepend one.
+  for (const [runEnv, host] of Object.entries(xServiceHosts)) {
+    if (!/^https?:\/\//.test(host)) {
+      throw new Error(`x-service host for run-env "${runEnv}" must include a protocol (http:// or https://)`)
+    }
+  }
+  if (!/^https?:\/\//.test(xServiceDefaultHost)) {
+    throw new Error("--x-service-default-host must include a protocol (http:// or https://)")
+  }
+
   return {
     ...args,
+    "x-service-hosts": xServiceHosts,
+    "x-service-default-host": xServiceDefaultHost,
+    "x-service-timeout": args["x-service-timeout"] || 10000,
     usingEnvPassword,
     usingEnvHashedPassword,
   } as DefaultedArgs // TODO: Technically no guarantee this is fulfilled.
@@ -748,6 +799,30 @@ export async function readConfigFile(configPath?: string): Promise<ConfigArgs> {
 }
 
 /**
+ * Parse the x-service-hosts option (a JSON object string) into a map of
+ * run-env to host.  An empty value yields an empty map.  Throws on invalid
+ * JSON so misconfiguration fails at startup.
+ */
+export function parseXServiceHosts(value?: string | Record<string, string>): Record<string, string> {
+  if (!value) {
+    return {}
+  }
+  if (typeof value === "object") {
+    return value
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error("--x-service-hosts must be a valid JSON object")
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("--x-service-hosts must be a valid JSON object")
+  }
+  return parsed as Record<string, string>
+}
+
+/**
  * parseConfigFile parses configFile into ConfigArgs.
  * configPath is used as the filename in error messages
  */
@@ -771,6 +846,9 @@ export function parseConfigFile(configFile: string, configPath: string): ConfigA
         return `--${optName}`
       } else if (Array.isArray(opt)) {
         return opt.map((o) => `--${optName}=${o}`)
+      } else if (opt && typeof opt === "object") {
+        // YAML maps (e.g. x-service-hosts) become JSON strings for the parser.
+        return `--${optName}=${JSON.stringify(opt)}`
       }
       return `--${optName}=${opt}`
     })

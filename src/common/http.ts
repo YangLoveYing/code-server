@@ -7,6 +7,7 @@ export enum HttpCode {
   Forbidden = 403,
   LargePayload = 413,
   ServerError = 500,
+  BadGateway = 502,
 }
 
 /**
