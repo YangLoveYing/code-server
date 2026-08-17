@@ -2,31 +2,7 @@ Index: code-server/lib/vscode/package-lock.json
 ===================================================================
 --- code-server.orig/lib/vscode/package-lock.json
 +++ code-server/lib/vscode/package-lock.json
-@@ -59,6 +59,7 @@
-         "katex": "^0.16.22",
-         "kerberos": "2.1.1",
-         "minimist": "^1.2.8",
-+        "mysql2": "^3.23.1",
-         "native-is-elevated": "0.9.0",
-         "native-keymap": "^3.3.5",
-         "node-addon-api": "^6.0.0",
-@@ -68,6 +69,7 @@
-         "ssh2": "^1.16.0",
-         "tas-client": "0.3.1",
-         "undici": "^7.28.0",
-+        "uuid": "^11.1.0",
-         "vscode-oniguruma": "1.7.0",
-         "vscode-regexpp": "^3.1.0",
-         "vscode-textmate": "^9.3.2",
-@@ -97,6 +99,7 @@
-         "@types/source-map-support": "^0.5.10",
-         "@types/ssh2": "^1.15.4",
-         "@types/trusted-types": "^2.0.7",
-+        "@types/uuid": "^10.0.0",
-         "@types/vscode-notebook-renderer": "^1.72.0",
-         "@types/wicg-file-system-access": "^2023.10.7",
-         "@types/windows-foreground-love": "^0.3.0",
-@@ -1830,6 +1833,16 @@
+@@ -1830,6 +1830,16 @@
          "@microsoft/dev-tunnels-ssh-tcp": "^3.12.29"
        }
      },
@@ -43,335 +19,255 @@ Index: code-server/lib/vscode/package-lock.json
      "node_modules/@microsoft/dev-tunnels-connections/node_modules/vscode-jsonrpc": {
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-4.0.0.tgz",
-@@ -3152,6 +3165,13 @@
-       "dev": true,
-       "license": "MIT"
-     },
-+    "node_modules/@types/uuid": {
-+      "version": "10.0.0",
-+      "resolved": "https://registry.npmjs.org/@types/uuid/-/uuid-10.0.0.tgz",
-+      "integrity": "sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==",
-+      "dev": true,
-+      "license": "MIT"
-+    },
-     "node_modules/@types/vinyl": {
-       "version": "2.0.12",
-       "resolved": "https://registry.npmjs.org/@types/vinyl/-/vinyl-2.0.12.tgz",
-@@ -5090,6 +5110,15 @@
-       "integrity": "sha512-d1W2aNSYcz/sxYO4pMGX9vq65qOTu0P800epMud+6cYYX0QcT7zyqcxec3VWzpgvdXo57UWmVbZpLMjX2m1I7Q==",
-       "license": "MIT"
-     },
-+    "node_modules/aws-ssl-profiles": {
-+      "version": "1.1.2",
-+      "resolved": "https://registry.npmjs.org/aws-ssl-profiles/-/aws-ssl-profiles-1.1.2.tgz",
-+      "integrity": "sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g==",
-+      "license": "MIT",
-+      "engines": {
-+        "node": ">= 6.0.0"
-+      }
-+    },
-     "node_modules/axios": {
-       "version": "1.16.0",
-       "resolved": "https://registry.npmjs.org/axios/-/axios-1.16.0.tgz",
-@@ -6909,6 +6938,15 @@
-       "dev": true,
-       "license": "MIT"
-     },
-+    "node_modules/denque": {
-+      "version": "2.1.0",
-+      "resolved": "https://registry.npmjs.org/denque/-/denque-2.1.0.tgz",
-+      "integrity": "sha512-HVQE3AAb/pxF8fQAoiqpvg9i3evqug3hoiwakOyZAwJm+6vZehbkYXZ0l4JxS+I3QxM97v5aaRNhj8v5oBhekw==",
-+      "license": "Apache-2.0",
-+      "engines": {
-+        "node": ">=0.10"
-+      }
-+    },
-     "node_modules/depd": {
-       "version": "2.0.0",
-       "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
-@@ -9082,6 +9120,15 @@
-         "url": "https://github.com/sponsors/ljharb"
-       }
-     },
-+    "node_modules/generate-function": {
-+      "version": "2.3.1",
-+      "resolved": "https://registry.npmjs.org/generate-function/-/generate-function-2.3.1.tgz",
-+      "integrity": "sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "is-property": "^1.0.2"
-+      }
-+    },
-     "node_modules/generator-function": {
-       "version": "2.0.1",
-       "resolved": "https://registry.npmjs.org/generator-function/-/generator-function-2.0.1.tgz",
-@@ -11442,7 +11489,6 @@
-       "version": "0.7.2",
-       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.2.tgz",
-       "integrity": "sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==",
--      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "safer-buffer": ">= 2.1.2 < 3.0.0"
-@@ -12100,6 +12146,12 @@
-       "integrity": "sha512-+lP4/6lKUBfQjZ2pdxThZvLUAafmZb8OAxFb8XXtiQmS35INgr85hdOGoEs124ez1FCnZJt6jau/T+alh58QFQ==",
-       "dev": true
-     },
-+    "node_modules/is-property": {
-+      "version": "1.0.2",
-+      "resolved": "https://registry.npmjs.org/is-property/-/is-property-1.0.2.tgz",
-+      "integrity": "sha512-Ks/IoX00TtClbGQr4TWXemAnktAQvYB7HzcCxDGqEZU6oCmb2INHuOoKxbtR+HFkmYWBKv/dOZtGRiAjDhj92g==",
-+      "license": "MIT"
-+    },
-     "node_modules/is-regex": {
-       "version": "1.2.1",
-       "resolved": "https://registry.npmjs.org/is-regex/-/is-regex-1.2.1.tgz",
-@@ -13142,6 +13194,12 @@
-         "url": "https://github.com/sponsors/sindresorhus"
-       }
-     },
-+    "node_modules/long": {
-+      "version": "5.3.2",
-+      "resolved": "https://registry.npmjs.org/long/-/long-5.3.2.tgz",
-+      "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==",
-+      "license": "Apache-2.0"
-+    },
-     "node_modules/loose-envify": {
-       "version": "1.4.0",
-       "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
-@@ -13187,6 +13245,21 @@
-         "es5-ext": "~0.10.2"
-       }
-     },
-+    "node_modules/lru.min": {
-+      "version": "1.1.4",
-+      "resolved": "https://registry.npmjs.org/lru.min/-/lru.min-1.1.4.tgz",
-+      "integrity": "sha512-DqC6n3QQ77zdFpCMASA1a3Jlb64Hv2N2DciFGkO/4L9+q/IpIAuRlKOvCXabtRW6cQf8usbmM6BE/TOPysCdIA==",
-+      "license": "MIT",
-+      "engines": {
-+        "bun": ">=1.0.0",
-+        "deno": ">=1.30.0",
-+        "node": ">=8.0.0"
-+      },
-+      "funding": {
-+        "type": "github",
-+        "url": "https://github.com/sponsors/wellwelwel"
-+      }
-+    },
-     "node_modules/make-dir": {
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/make-dir/-/make-dir-4.0.0.tgz",
-@@ -14012,6 +14085,40 @@
-         "node": ">= 0.10"
-       }
-     },
-+    "node_modules/mysql2": {
-+      "version": "3.23.1",
-+      "resolved": "https://registry.npmjs.org/mysql2/-/mysql2-3.23.1.tgz",
-+      "integrity": "sha512-tTuRnC7qCet2IOfSNMYZ5SwXuBnfvBPAcIA28P0gtruXyZlU1LMxA6uha32kYypoFgyYklMqhLWwt4laYwXR/Q==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "aws-ssl-profiles": "^1.1.2",
-+        "denque": "^2.1.0",
-+        "generate-function": "^2.3.1",
-+        "iconv-lite": "^0.7.2",
-+        "long": "^5.3.2",
-+        "lru.min": "^1.1.4",
-+        "named-placeholders": "^1.1.6",
-+        "sql-escaper": "^1.5.1"
-+      },
-+      "engines": {
-+        "node": ">= 8.0"
-+      },
-+      "peerDependencies": {
-+        "@types/node": ">= 8"
-+      }
-+    },
-+    "node_modules/named-placeholders": {
-+      "version": "1.1.6",
-+      "resolved": "https://registry.npmjs.org/named-placeholders/-/named-placeholders-1.1.6.tgz",
-+      "integrity": "sha512-Tz09sEL2EEuv5fFowm419c1+a/jSMiBjI9gHxVLrVdbUkkNUUfjsVYs9pVZu5oCon/kmRh9TfLEObFtkVxmY0w==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "lru.min": "^1.1.0"
-+      },
-+      "engines": {
-+        "node": ">=8.0.0"
-+      }
-+    },
-     "node_modules/nan": {
-       "version": "2.26.2",
-       "resolved": "https://registry.npmjs.org/nan/-/nan-2.26.2.tgz",
-@@ -17406,6 +17513,21 @@
-         "node": ">=0.10.0"
-       }
-     },
-+    "node_modules/sql-escaper": {
-+      "version": "1.5.1",
-+      "resolved": "https://registry.npmjs.org/sql-escaper/-/sql-escaper-1.5.1.tgz",
-+      "integrity": "sha512-4toX5E1fQbBrpfXidaHnF0669nkAdETeIPTs2SUjxxD7RRIs9ICG4gtpmfc68JCEKehsdwLFqBu9VlQqZ1P1gg==",
-+      "license": "MIT",
-+      "engines": {
-+        "bun": ">=1.0.0",
-+        "deno": ">=2.0.0",
-+        "node": ">=12.0.0"
-+      },
-+      "funding": {
-+        "type": "github",
-+        "url": "https://github.com/mysqljs/sql-escaper?sponsor=1"
-+      }
-+    },
-     "node_modules/ssh2": {
-       "version": "1.17.0",
-       "resolved": "https://registry.npmjs.org/ssh2/-/ssh2-1.17.0.tgz",
-@@ -19130,13 +19252,16 @@
+@@ -19129,16 +19139,6 @@
+       "resolved": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
        "integrity": "sha1-RQ1Nyfpw3nMnYvvS1KKJgUGaDM8= sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="
      },
-     "node_modules/uuid": {
+-    "node_modules/uuid": {
 -      "version": "3.4.0",
 -      "resolved": "https://registry.npmjs.org/uuid/-/uuid-3.4.0.tgz",
 -      "integrity": "sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==",
 -      "deprecated": "uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).",
-+      "version": "11.1.1",
-+      "resolved": "https://registry.npmjs.org/uuid/-/uuid-11.1.1.tgz",
-+      "integrity": "sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==",
-+      "funding": [
-+        "https://github.com/sponsors/broofa",
-+        "https://github.com/sponsors/ctavan"
-+      ],
-       "license": "MIT",
-       "bin": {
+-      "license": "MIT",
+-      "bin": {
 -        "uuid": "bin/uuid"
-+        "uuid": "dist/esm/bin/uuid"
-       }
-     },
+-      }
+-    },
      "node_modules/v8-to-istanbul": {
-Index: code-server/lib/vscode/package.json
-===================================================================
---- code-server.orig/lib/vscode/package.json
-+++ code-server/lib/vscode/package.json
-@@ -143,6 +143,7 @@
-     "katex": "^0.16.22",
-     "kerberos": "2.1.1",
-     "minimist": "^1.2.8",
-+    "mysql2": "^3.23.1",
-     "native-is-elevated": "0.9.0",
-     "native-keymap": "^3.3.5",
-     "node-addon-api": "^6.0.0",
-@@ -152,6 +153,7 @@
-     "ssh2": "^1.16.0",
-     "tas-client": "0.3.1",
-     "undici": "^7.28.0",
-+    "uuid": "^11.1.0",
-     "vscode-oniguruma": "1.7.0",
-     "vscode-regexpp": "^3.1.0",
-     "vscode-textmate": "^9.3.2",
-@@ -181,6 +183,7 @@
-     "@types/source-map-support": "^0.5.10",
-     "@types/ssh2": "^1.15.4",
-     "@types/trusted-types": "^2.0.7",
-+    "@types/uuid": "^10.0.0",
-     "@types/vscode-notebook-renderer": "^1.72.0",
-     "@types/wicg-file-system-access": "^2023.10.7",
-     "@types/windows-foreground-love": "^0.3.0",
-Index: code-server/lib/vscode/remote/package.json
-===================================================================
---- code-server.orig/lib/vscode/remote/package.json
-+++ code-server/lib/vscode/remote/package.json
-@@ -40,11 +40,13 @@
-     "katex": "^0.16.22",
-     "kerberos": "2.1.1",
-     "minimist": "^1.2.8",
-+    "mysql2": "^3.23.1",
-     "node-addon-api": "^6.0.0",
-     "node-pty": "^1.2.0-beta.13",
-     "ssh2": "^1.16.0",
-     "tar": "^7.5.9",
-     "tas-client": "0.3.1",
-+    "uuid": "^11.1.0",
-     "vscode-oniguruma": "1.7.0",
-     "vscode-regexpp": "^3.1.0",
-     "vscode-textmate": "^9.3.2",
+       "version": "9.3.0",
+       "resolved": "https://registry.npmjs.org/v8-to-istanbul/-/v8-to-istanbul-9.3.0.tgz",
 Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
 +++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
-@@ -16,6 +16,29 @@ import { IServerEnvironmentService } fro
+@@ -16,10 +16,21 @@ import { IServerEnvironmentService } fro
  import { AbstractDiskFileSystemProviderChannel, AbstractSessionFileWatcher, ISessionFileWatcher } from '../../platform/files/node/diskFileSystemProviderServer.js';
  import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
  import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
-+import { v4 as uuidv4 } from 'uuid';
-+import mysql from 'mysql2/promise';
++import * as http from 'http';
 +
-+// ─── Database Config ─────────────────────────────
-+const dbConfig = {
-+	host: 'icpldev.tdsql.dbdns.cmbchina.cn',
-+	port: 6666,
-+	database: 'icpl',
-+	user: 'app1',
-+	password: 'mZ7#mYf7',
++// ─── XService Environment URL Mapping ──────────
++const ENV_SERVICE_URLS: Record<string, string> = {
++	dev: 'http://x-service.paas.cmbchina.cn',
++	st:  'http://x-service.paasst.cmbchina.cn',
++	oa:  'http://xservice.paasuat.cmbchina.cn',
++	prd: 'http://xservice-prd.paas.cmbchina.cn',
 +};
-+
-+const fileTrackerPool = mysql.createPool({
-+	host:     dbConfig.host,
-+	port:     dbConfig.port,
-+	database: dbConfig.database,
-+	user:     dbConfig.user,
-+	password: dbConfig.password,
-+	waitForConnections: true,
-+	connectionLimit: 5,
-+	charset: 'utf8mb4',
-+});
-+// ─────────────────────────────────────────────────
++const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
  
  export class RemoteAgentFileSystemProviderChannel extends AbstractDiskFileSystemProviderChannel<RemoteAgentConnectionContext> {
  
-@@ -31,6 +54,24 @@ export class RemoteAgentFileSystemProvid
+ 	private readonly uriTransformerCache = new Map<string, IURITransformer>();
++	private readonly authCache = new Map<string, { artifactsPath: string; expireAt: number }>();
+ 
+ 	constructor(
+ 		logService: ILogService,
+@@ -31,6 +42,208 @@ export class RemoteAgentFileSystemProvid
  		this._register(this.provider);
  	}
  
 +	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
 +
-+	override call<TResult>(ctx: RemoteAgentConnectionContext, command: string, args: unknown[]): Promise<TResult> {
-+		if (command === 'writeFile') {
++	//#region Auth: Cache helpers
++
++	private getCachedArtifactsPath(sessionID: string): string | null {
++		const entry = this.authCache.get(sessionID);
++		if (entry && entry.expireAt > Date.now()) {
++			return entry.artifactsPath;
++		}
++		this.authCache.delete(sessionID);
++		return null;
++	}
++
++	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
++		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
++	}
++
++	//#endregion
++
++	//#region Auth: JWT validation
++
++	private isTokenExpired(idToken: string): boolean {
++		try {
++			const parts = idToken.split('.');
++			if (parts.length !== 3) {
++				return true;
++			}
++			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
++			if (!payload.exp || typeof payload.exp !== 'number') {
++				return true;
++			}
++			return payload.exp * 1000 < Date.now();
++		} catch {
++			return true;
++		}
++	}
++
++	//#endregion
++
++	//#region Auth: XService API
++
++	private fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
++		return new Promise((resolve, reject) => {
++			const baseUrl = ENV_SERVICE_URLS[runEnv];
++			if (!baseUrl) {
++				return reject(new Error(`Unknown run_env: ${runEnv}`));
++			}
++
++			const url = `${baseUrl}/api/v1/sessions/${sessionID}/detail?healthCheck=true`;
++			const req = http.get(url, {
++				headers: { 'Id-Token': idToken },
++				timeout: 10000,
++			}, (res) => {
++				let data = '';
++				res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
++				res.on('end', () => {
++					try {
++						const json = JSON.parse(data);
++						if (json.returnCode === 'SUC0000' && json.data?.artifactsPath) {
++							resolve(json.data.artifactsPath);
++						} else {
++							reject(new Error(`XService returned: ${json.returnCode}`));
++						}
++					} catch (e) {
++						reject(new Error(`Failed to parse XService response: ${(e as Error).message}`));
++					}
++				});
++			});
++
++			req.on('error', (e: Error) => reject(new Error(`XService request failed: ${e.message}`)));
++			req.on('timeout', () => {
++				req.destroy();
++				reject(new Error('XService request timed out'));
++			});
++		});
++	}
++
++	//#endregion
++
++	//#region File Change: Record to XService API
++
++	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
++		const baseUrl = ENV_SERVICE_URLS[runEnv];
++		if (!baseUrl) {
++			this.logService.error(`[FileTracker] Unknown run_env: ${runEnv}`);
++			return;
++		}
++
++		const url = `${baseUrl}/api/v1/backendPromptMng/backend-prompts`;
++		const postData = JSON.stringify({
++			data: [{
++				sessionId: sessionID,
++				content: `${filePath} 文件内容发生变化`,
++				origin: 'code-server',
++				type: 'fileChange'
++			}]
++		});
++
++		const req = http.request(url, {
++			method: 'POST',
++			headers: {
++				'Id-Token': idToken,
++				'Content-Type': 'application/json',
++				'Content-Length': Buffer.byteLength(postData)
++			},
++			timeout: 10000
++		}, (res) => {
++			let data = '';
++			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
++			res.on('end', () => {
++				if (res.statusCode !== 200) {
++					this.logService.error(`[FileTracker] API request failed with status ${res.statusCode}: ${data}`);
++				}
++			});
++		});
++
++		req.on('error', (e: Error) => {
++			this.logService.error(`[FileTracker] API request failed: ${e.message}`);
++		});
++
++		req.on('timeout', () => {
++			req.destroy();
++			this.logService.error('[FileTracker] API request timed out');
++		});
++
++		req.write(postData);
++		req.end();
++	}
++
++	//#endregion
++
++	//#region Auth: Main entry
++
++	private async checkFileAccess(ctx: RemoteAgentConnectionContext, filePath: string): Promise<void> {
++		const { sessionID, idToken, runEnv } = ctx;
++
++		if (!sessionID || !idToken) {
++			throw new Error('Access denied: missing sessionID or ID-Token');
++		}
++
++		// 1. 认证：JWT 格式校验 + 过期检查
++		if (this.isTokenExpired(idToken)) {
++			throw new Error('Access denied: ID-Token is invalid or expired');
++		}
++
++		// 2. 缓存：优先从缓存获取允许访问的路径
++		let artifactsPath = this.getCachedArtifactsPath(sessionID);
++
++		if (!artifactsPath) {
++			// 3. 鉴权：调用 XService 接口获取 artifactsPath
++			try {
++				artifactsPath = await this.fetchArtifactsPath(runEnv || 'dev', sessionID, idToken);
++				this.setCachedArtifactsPath(sessionID, artifactsPath);
++			} catch (e) {
++				this.logService.error(`[Auth] Failed to fetch session detail: ${(e as Error).message}`);
++				throw new Error('Access denied: unable to verify permissions');
++			}
++		}
++
++		// 4. 鉴权：检查文件路径是否在允许的目录内
++		const normalizedPath = filePath.endsWith('/') ? filePath.slice(0, -1) : filePath;
++		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
++		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
++			throw new Error(`Access denied: path ${filePath} is outside allowed directory`);
++		}
++	}
++
++	//#endregion
++
++	//#region IPC Interception
++
++	override async call<TResult>(ctx: RemoteAgentConnectionContext, command: string, args: unknown[]): Promise<TResult> {
++		// 路径类命令（args[0] 是 UriComponents 对象）需要鉴权
++		// fd 类命令（args[0] 是数字）跳过鉴权，因为 open/readFile 时已鉴权
++		let fp: string | undefined;
++		if (args[0] && typeof args[0] === 'object') {
 +			const uriTransformer = this.getUriTransformer(ctx);
 +			const _resource = args[0] as UriComponents;
 +			const resource = this.transformIncoming(uriTransformer, _resource);
-+			const fp = resource.fsPath;
-+			if (fp && typeof fp === 'string' && RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
-+				fileTrackerPool.execute(
-+					'INSERT INTO backend_prompt (uuid, session_id, content, origin, type) VALUES (?, ?, ?, ?, ?)',
-+					[uuidv4(), ctx.reconnectionToken || 'unknown', `${fp} 文件内容发生变化`, 'code-server', 'fileChange']
-+				).catch((err: any) => { console.error('[FileTracker] DB error:', err.message); });
++			fp = resource.fsPath;
++
++			// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
++			await this.checkFileAccess(ctx, fp);
++		}
++
++		// 原有的 writeFile 记录逻辑（改为调用 API）
++		if (command === 'writeFile' && fp && typeof fp === 'string') {
++			if (RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
++				const { sessionID, idToken, runEnv } = ctx;
++				if (sessionID && idToken && runEnv) {
++					this.recordFileChange(runEnv, sessionID, idToken, fp);
++				} else {
++					this.logService.info('[FileTracker] Skipping file change record: missing sessionID, idToken, or runEnv in context');
++				}
 +			}
 +		}
++
 +		return super.call(ctx, command, args);
 +	}
++
++	//#endregion
 +
  	protected override getUriTransformer(ctx: RemoteAgentConnectionContext): IURITransformer {
  		let transformer = this.uriTransformerCache.get(ctx.remoteAuthority);
  		if (!transformer) {
-Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
-===================================================================
---- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
-+++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
-@@ -759,7 +759,8 @@ export class ManagementPersistentConnect
- 		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
- 		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
- 			remoteAuthority: remoteAuthority,
--			clientId: clientId
-+			clientId: clientId,
-+			reconnectionToken: reconnectionToken
- 		}, options.ipcLogger));
- 	}
- 
-Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
-===================================================================
---- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
-+++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
-@@ -37,4 +37,5 @@ export interface IRemoteAgentEnvironment
- export interface RemoteAgentConnectionContext {
- 	remoteAuthority: string;
- 	clientId: string;
-+	reconnectionToken?: string;
- }

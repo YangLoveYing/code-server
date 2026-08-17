@@ -216,34 +216,36 @@ Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnectio
  }
  
 -export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string): Promise<ManagementPersistentConnection> {
-+export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string, sessionID?: string): Promise<ManagementPersistentConnection> {
++export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string, sessionID?: string, idToken?: string, runEnv?: string): Promise<ManagementPersistentConnection> {
  	return createInitialConnection(
  		options,
  		async (simpleOptions) => {
  			const { protocol } = await doConnectRemoteAgentManagement(simpleOptions, CancellationToken.None);
 -			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol);
-+			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol, sessionID);
++			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol, sessionID, idToken, runEnv);
  		}
  	);
  }
-@@ -755,11 +755,14 @@ export class ManagementPersistentConnect
+@@ -755,11 +755,16 @@ export class ManagementPersistentConnect
  
  	public readonly client: Client<RemoteAgentConnectionContext>;
  
 -	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol) {
-+	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol, sessionID?: string) {
++	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol, sessionID?: string, idToken?: string, runEnv?: string) {
  		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
-+		console.log('33333 created with 11111111:', reconnectionToken, sessionID);
++		console.log('ManagementPersistentConnection created:', reconnectionToken, sessionID, idToken, runEnv);
  		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
  			remoteAuthority: remoteAuthority,
 -			clientId: clientId
 +			clientId: clientId,
 +			sessionID: sessionID,
++			idToken: idToken,
++			runEnv: runEnv,
 +			reconnectionToken: this.reconnectionToken
  		}, options.ipcLogger));
  	}
  
-@@ -798,7 +801,7 @@ function safeDisposeProtocolAndSocket(pr
+@@ -798,7 +803,7 @@ function safeDisposeProtocolAndSocket(pr
  function getErrorFromMessage(msg: any): Error | null {
  	if (msg && msg.type === 'error') {
  		const error = new Error(`Connection error: ${msg.reason}`);
@@ -256,12 +258,14 @@ Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironme
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
 +++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
-@@ -37,4 +37,6 @@ export interface IRemoteAgentEnvironment
+@@ -37,4 +37,8 @@ export interface IRemoteAgentEnvironment
  export interface RemoteAgentConnectionContext {
  	remoteAuthority: string;
  	clientId: string;
 +	reconnectionToken: string;
 +	sessionID: string | undefined;
++	idToken: string | undefined;
++	runEnv: string | undefined;
  }
 Index: code-server/lib/vscode/src/vs/server/node/webClientServer.ts
 ===================================================================
@@ -276,13 +280,15 @@ Index: code-server/lib/vscode/src/vs/server/node/webClientServer.ts
  		const workbenchWebConfiguration = {
  			remoteAuthority,
  			serverBasePath: basePath,
-@@ -408,10 +408,10 @@ export class WebClientServer {
+@@ -408,10 +408,12 @@ export class WebClientServer {
  			folderUri: resolveWorkspaceURI(this._environmentService.args['default-folder']),
  			workspaceUri: resolveWorkspaceURI(this._environmentService.args['default-workspace']),
  			productConfiguration,
 -			callbackRoute: callbackRoute
 +			callbackRoute: callbackRoute,
-+			sessionID: cookies || req.headers.cookie,
++			sessionID: cookies['session_id'] || '',
++			idToken: cookies['id_token'] || '',
++			runEnv: cookies['run_env'] || '',
  		};
  
 -		const cookies = cookie.parse(req.headers.cookie || '');
@@ -293,13 +299,21 @@ Index: code-server/lib/vscode/src/vs/workbench/browser/web.api.ts
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/workbench/browser/web.api.ts
 +++ code-server/lib/vscode/src/vs/workbench/browser/web.api.ts
-@@ -164,6 +164,10 @@ export interface IWorkbenchConstructionO
+@@ -164,6 +164,18 @@ export interface IWorkbenchConstructionO
  	readonly serverBasePath?: string;
  
  	/**
 +	 *
 +	 */
 +	readonly sessionID?: string;
++	/**
++	 *
++	 */
++	readonly idToken?: string;
++	/**
++	 *
++	 */
++	readonly runEnv?: string;
 +	/**
  	 * The connection token to send to the server.
  	 */
@@ -316,7 +330,7 @@ Index: code-server/lib/vscode/src/vs/workbench/services/remote/browser/remoteAge
  
  export class RemoteAgentService extends AbstractRemoteAgentService implements IRemoteAgentService {
  
-@@ -27,9 +28,9 @@ export class RemoteAgentService extends
+@@ -27,9 +28,10 @@ export class RemoteAgentService extends
  		@IProductService productService: IProductService,
  		@IRemoteAuthorityResolverService remoteAuthorityResolverService: IRemoteAuthorityResolverService,
  		@ISignService signService: ISignService,
@@ -324,7 +338,8 @@ Index: code-server/lib/vscode/src/vs/workbench/services/remote/browser/remoteAge
 +		@ILogService logService: ILogService,
  	) {
 -		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService);
-+		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService, (environmentService as IBrowserWorkbenchEnvironmentService).options?.sessionID);
++		const opts = (environmentService as IBrowserWorkbenchEnvironmentService).options;
++		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService, opts?.sessionID, opts?.idToken, opts?.runEnv);
  	}
  }
  
@@ -332,37 +347,41 @@ Index: code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRe
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
 +++ code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
-@@ -35,11 +35,12 @@ export abstract class AbstractRemoteAgen
+@@ -35,11 +35,14 @@ export abstract class AbstractRemoteAgen
  		@IProductService productService: IProductService,
  		@IRemoteAuthorityResolverService private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
  		@ISignService signService: ISignService,
 -		@ILogService private readonly _logService: ILogService
 +		@ILogService private readonly _logService: ILogService,
 +		sessionID?: string,
++		idToken?: string,
++		runEnv?: string,
  	) {
  		super();
  		if (this._environmentService.remoteAuthority) {
 -			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService));
-+			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService, sessionID));
++			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService, sessionID, idToken, runEnv));
  		} else {
  			this._connection = null;
  		}
-@@ -166,7 +167,8 @@ class RemoteAgentConnection extends Disp
+@@ -166,7 +169,10 @@ class RemoteAgentConnection extends Disp
  		private readonly _remoteSocketFactoryService: IRemoteSocketFactoryService,
  		private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
  		private readonly _signService: ISignService,
 -		private readonly _logService: ILogService
 +		private readonly _logService: ILogService,
 +		private readonly _sessionID?: string,
++		private readonly _idToken?: string,
++		private readonly _runEnv?: string,
  	) {
  		super();
  		this.remoteAuthority = remoteAuthority;
-@@ -240,7 +242,7 @@ class RemoteAgentConnection extends Disp
+@@ -240,7 +246,7 @@ class RemoteAgentConnection extends Disp
  		let connection: ManagementPersistentConnection;
  		const start = Date.now();
  		try {
 -			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`));
-+			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`, this._sessionID));
++			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`, this._sessionID, this._idToken, this._runEnv));
  			this._managementConnection = connection;
  		} finally {
  			this._initialConnectionMs = Date.now() - start;
