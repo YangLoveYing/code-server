@@ -22,3 +22,5 @@ test/test-results
 # Quilt's internal data.
 /.pc
 /patches/*.diff~
+
+/data/*
