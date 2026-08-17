@@ -194,3 +194,194 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/timeline/browser/timeline
  
  namespace OpenTimelineAction {
  
+Index: code-server/lib/vscode/src/vs/code/browser/workbench/workbench.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/code/browser/workbench/workbench.ts
++++ code-server/lib/vscode/src/vs/code/browser/workbench/workbench.ts
+@@ -3,6 +3,8 @@
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
++console.log('get cookie:', document.cookie);
++
+ import { isStandalone } from '../../../base/browser/browser.js';
+ import { addDisposableListener } from '../../../base/browser/dom.js';
+ import { mainWindow } from '../../../base/browser/window.js';
+Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
++++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentConnection.ts
+@@ -411,12 +411,12 @@ export interface IAddressProvider<T exte
+ 	getAddress(): Promise<IAddress<T>>;
+ }
+ 
+-export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string): Promise<ManagementPersistentConnection> {
++export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string, sessionID?: string, idToken?: string, runEnv?: string): Promise<ManagementPersistentConnection> {
+ 	return createInitialConnection(
+ 		options,
+ 		async (simpleOptions) => {
+ 			const { protocol } = await doConnectRemoteAgentManagement(simpleOptions, CancellationToken.None);
+-			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol);
++			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol, sessionID, idToken, runEnv);
+ 		}
+ 	);
+ }
+@@ -755,11 +755,16 @@ export class ManagementPersistentConnect
+ 
+ 	public readonly client: Client<RemoteAgentConnectionContext>;
+ 
+-	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol) {
++	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol, sessionID?: string, idToken?: string, runEnv?: string) {
+ 		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
++		console.log('ManagementPersistentConnection created:', reconnectionToken, sessionID, idToken, runEnv);
+ 		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
+ 			remoteAuthority: remoteAuthority,
+-			clientId: clientId
++			clientId: clientId,
++			sessionID: sessionID,
++			idToken: idToken,
++			runEnv: runEnv,
++			reconnectionToken: this.reconnectionToken
+ 		}, options.ipcLogger));
+ 	}
+ 
+@@ -798,7 +803,7 @@ function safeDisposeProtocolAndSocket(pr
+ function getErrorFromMessage(msg: any): Error | null {
+ 	if (msg && msg.type === 'error') {
+ 		const error = new Error(`Connection error: ${msg.reason}`);
+-		// eslint-disable-next-line local/code-no-any-casts
++
+ 		(<any>error).code = 'VSCODE_CONNECTION_ERROR';
+ 		return error;
+ 	}
+Index: code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
++++ code-server/lib/vscode/src/vs/platform/remote/common/remoteAgentEnvironment.ts
+@@ -37,4 +37,8 @@ export interface IRemoteAgentEnvironment
+ export interface RemoteAgentConnectionContext {
+ 	remoteAuthority: string;
+ 	clientId: string;
++	reconnectionToken: string;
++	sessionID: string | undefined;
++	idToken: string | undefined;
++	runEnv: string | undefined;
+ }
+Index: code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/webClientServer.ts
++++ code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+@@ -392,7 +392,7 @@ export class WebClientServer {
+ 				Object.assign(productConfiguration, productOverrides);
+ 			} catch (err) {/* Ignore Error */ }
+ 		}
+-
++		const cookies = cookie.parse(req.headers.cookie || '');
+ 		const workbenchWebConfiguration = {
+ 			remoteAuthority,
+ 			serverBasePath: basePath,
+@@ -408,10 +408,12 @@ export class WebClientServer {
+ 			folderUri: resolveWorkspaceURI(this._environmentService.args['default-folder']),
+ 			workspaceUri: resolveWorkspaceURI(this._environmentService.args['default-workspace']),
+ 			productConfiguration,
+-			callbackRoute: callbackRoute
++			callbackRoute: callbackRoute,
++			sessionID: cookies['session_id'] || '',
++			idToken: cookies['id_token'] || '',
++			runEnv: cookies['run_env'] || '',
+ 		};
+ 
+-		const cookies = cookie.parse(req.headers.cookie || '');
+ 		const locale = this._environmentService.args.locale || await getLocaleFromConfig(this._environmentService.argvResource.fsPath) || cookies['vscode.nls.locale'] || req.headers['accept-language']?.split(',')[0]?.toLowerCase() || 'en';
+ 		let WORKBENCH_NLS_BASE_URL: string | undefined;
+ 		let WORKBENCH_NLS_URL: string;
+Index: code-server/lib/vscode/src/vs/workbench/browser/web.api.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/browser/web.api.ts
++++ code-server/lib/vscode/src/vs/workbench/browser/web.api.ts
+@@ -164,6 +164,18 @@ export interface IWorkbenchConstructionO
+ 	readonly serverBasePath?: string;
+ 
+ 	/**
++	 *
++	 */
++	readonly sessionID?: string;
++	/**
++	 *
++	 */
++	readonly idToken?: string;
++	/**
++	 *
++	 */
++	readonly runEnv?: string;
++	/**
+ 	 * The connection token to send to the server.
+ 	 */
+ 	readonly connectionToken?: string | Promise<string>;
+Index: code-server/lib/vscode/src/vs/workbench/services/remote/browser/remoteAgentService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/remote/browser/remoteAgentService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/remote/browser/remoteAgentService.ts
+@@ -17,6 +17,7 @@ import { IWorkbenchContribution, Workben
+ import { IHostService } from '../../host/browser/host.js';
+ import { IUserDataProfileService } from '../../userDataProfile/common/userDataProfile.js';
+ import { IRemoteSocketFactoryService } from '../../../../platform/remote/common/remoteSocketFactoryService.js';
++import { IBrowserWorkbenchEnvironmentService } from '../../environment/browser/environmentService.js';
+ 
+ export class RemoteAgentService extends AbstractRemoteAgentService implements IRemoteAgentService {
+ 
+@@ -27,9 +28,10 @@ export class RemoteAgentService extends
+ 		@IProductService productService: IProductService,
+ 		@IRemoteAuthorityResolverService remoteAuthorityResolverService: IRemoteAuthorityResolverService,
+ 		@ISignService signService: ISignService,
+-		@ILogService logService: ILogService
++		@ILogService logService: ILogService,
+ 	) {
+-		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService);
++		const opts = (environmentService as IBrowserWorkbenchEnvironmentService).options;
++		super(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService, opts?.sessionID, opts?.idToken, opts?.runEnv);
+ 	}
+ }
+ 
+Index: code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/remote/common/abstractRemoteAgentService.ts
+@@ -35,11 +35,14 @@ export abstract class AbstractRemoteAgen
+ 		@IProductService productService: IProductService,
+ 		@IRemoteAuthorityResolverService private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
+ 		@ISignService signService: ISignService,
+-		@ILogService private readonly _logService: ILogService
++		@ILogService private readonly _logService: ILogService,
++		sessionID?: string,
++		idToken?: string,
++		runEnv?: string,
+ 	) {
+ 		super();
+ 		if (this._environmentService.remoteAuthority) {
+-			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService));
++			this._connection = this._register(new RemoteAgentConnection(this._environmentService.remoteAuthority, productService.commit, productService.quality, this.remoteSocketFactoryService, this._remoteAuthorityResolverService, signService, this._logService, sessionID, idToken, runEnv));
+ 		} else {
+ 			this._connection = null;
+ 		}
+@@ -166,7 +169,10 @@ class RemoteAgentConnection extends Disp
+ 		private readonly _remoteSocketFactoryService: IRemoteSocketFactoryService,
+ 		private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
+ 		private readonly _signService: ISignService,
+-		private readonly _logService: ILogService
++		private readonly _logService: ILogService,
++		private readonly _sessionID?: string,
++		private readonly _idToken?: string,
++		private readonly _runEnv?: string,
+ 	) {
+ 		super();
+ 		this.remoteAuthority = remoteAuthority;
+@@ -240,7 +246,7 @@ class RemoteAgentConnection extends Disp
+ 		let connection: ManagementPersistentConnection;
+ 		const start = Date.now();
+ 		try {
+-			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`));
++			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`, this._sessionID, this._idToken, this._runEnv));
+ 			this._managementConnection = connection;
+ 		} finally {
+ 			this._initialConnectionMs = Date.now() - start;
