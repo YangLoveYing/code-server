@@ -1,0 +1,139 @@
+Index: code-server/lib/vscode/src/vs/workbench/contrib/debug/browser/debug.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/debug/browser/debug.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/debug/browser/debug.contribution.ts
+@@ -254,7 +254,7 @@ if (isMacintosh) {
+
+ // Editor Title Menu's "Run/Debug" dropdown item
+
+-MenuRegistry.appendMenuItem(MenuId.EditorTitle, { submenu: MenuId.EditorTitleRun, isSplitButton: { togglePrimaryAction: true }, title: nls.localize2('run', "Run or Debug..."), icon: icons.debugRun, group: 'navigation', order: -1 });
++// MenuRegistry.appendMenuItem(MenuId.EditorTitle, { submenu: MenuId.EditorTitleRun, isSplitButton: { togglePrimaryAction: true }, title: nls.localize2('run', "Run or Debug..."), icon: icons.debugRun, group: 'navigation', order: -1 });
+
+ // Debug menu
+
+Index: code-server/lib/vscode/src/vs/workbench/contrib/testing/browser/testing.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/testing/browser/testing.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/testing/browser/testing.contribution.ts
+@@ -9,7 +9,7 @@ import { localize, localize2 } from '../../../../nls.js';
+ import { registerAction2 } from '../../../../platform/actions/common/actions.js';
+ import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+ import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+-import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++// import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+ import { IFileService } from '../../../../platform/files/common/files.js';
+ import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+ import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+@@ -40,15 +40,15 @@ import { ITestingContinuousRunService, TestingContinuousRunService } from '../co
+ import { ITestingDecorationsService } from '../common/testingDecorations.js';
+ import { ITestingPeekOpener } from '../common/testingPeekOpener.js';
+ import { CodeCoverageDecorations } from './codeCoverageDecorations.js';
+-import { testingResultsIcon, testingViewIcon } from './icons.js';
+-import { TestCoverageView } from './testCoverageView.js';
+-import { allTestActions, discoverAndRunTests } from './testExplorerActions.js';
++import { testingResultsIcon } from './icons.js';
++// import { TestCoverageView } from './testCoverageView.js';
++import { discoverAndRunTests } from './testExplorerActions.js';
+ import './testingConfigurationUi.js';
+ import { TestingDecorations, TestingDecorationService } from './testingDecorations.js';
+-import { TestingExplorerView } from './testingExplorerView.js';
++// import { TestingExplorerView } from './testingExplorerView.js';
+ import { CloseTestPeek, CollapsePeekStack, GoToNextMessageAction, GoToPreviousMessageAction, OpenMessageInEditorAction, TestingOutputPeekController, TestingPeekOpener, TestResultsView, ToggleTestingPeekHistory } from './testingOutputPeek.js';
+ import { TestingProgressTrigger } from './testingProgressUiService.js';
+-import { TestingViewPaneContainer } from './testingViewPaneContainer.js';
++// import { TestingViewPaneContainer } from './testingViewPaneContainer.js';
+
+ registerSingleton(ITestService, TestService, InstantiationType.Delayed);
+ registerSingleton(ITestResultStorage, TestResultStorage, InstantiationType.Delayed);
+@@ -60,22 +60,22 @@ registerSingleton(ITestExplorerFilterState, TestExplorerFilterState, Instantiati
+ registerSingleton(ITestingPeekOpener, TestingPeekOpener, InstantiationType.Delayed);
+ registerSingleton(ITestingDecorationsService, TestingDecorationService, InstantiationType.Delayed);
+
+-const viewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
+-	id: Testing.ViewletId,
+-	title: localize2('test', 'Testing'),
+-	ctorDescriptor: new SyncDescriptor(TestingViewPaneContainer),
+-	icon: testingViewIcon,
+-	alwaysUseContainerInfo: true,
+-	order: 6,
+-	openCommandActionDescriptor: {
+-		id: Testing.ViewletId,
+-		mnemonicTitle: localize({ key: 'miViewTesting', comment: ['&& denotes a mnemonic'] }, "T&&esting"),
+-		// todo: coordinate with joh whether this is available
+-		// keybindings: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.US_SEMICOLON },
+-		order: 4,
+-	},
+-	hideIfEmpty: true,
+-}, ViewContainerLocation.Sidebar);
++// const viewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
++// 	id: Testing.ViewletId,
++// 	title: localize2('test', 'Testing'),
++// 	ctorDescriptor: new SyncDescriptor(TestingViewPaneContainer),
++// 	icon: testingViewIcon,
++// 	alwaysUseContainerInfo: true,
++// 	order: 6,
++// 	openCommandActionDescriptor: {
++// 		id: Testing.ViewletId,
++// 		mnemonicTitle: localize({ key: 'miViewTesting', comment: ['&& denotes a mnemonic'] }, "T&&esting"),
++// 		// todo: coordinate with joh whether this is available
++// 		// keybindings: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.US_SEMICOLON },
++// 		order: 4,
++// 	},
++// 	hideIfEmpty: true,
++// }, ViewContainerLocation.Sidebar);
+
+
+ const testResultsViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
+@@ -109,29 +109,29 @@ viewsRegistry.registerViewWelcomeContent(Testing.ExplorerViewId, {
+ 	order: 10
+ });
+
+-viewsRegistry.registerViews([{
+-	id: Testing.ExplorerViewId,
+-	name: localize2('testExplorer', "Test Explorer"),
+-	ctorDescriptor: new SyncDescriptor(TestingExplorerView),
+-	canToggleVisibility: true,
+-	canMoveView: true,
+-	weight: 80,
+-	order: -999,
+-	containerIcon: testingViewIcon,
+-	when: ContextKeyExpr.greater(TestingContextKeys.providerCount.key, 0),
+-}, {
+-	id: Testing.CoverageViewId,
+-	name: localize2('testCoverage', "Test Coverage"),
+-	ctorDescriptor: new SyncDescriptor(TestCoverageView),
+-	canToggleVisibility: true,
+-	canMoveView: true,
+-	weight: 80,
+-	order: -998,
+-	containerIcon: testingViewIcon,
+-	when: TestingContextKeys.isTestCoverageOpen,
+-}], viewContainer);
+-
+-allTestActions.forEach(registerAction2);
++// viewsRegistry.registerViews([{
++// 	id: Testing.ExplorerViewId,
++// 	name: localize2('testExplorer', "Test Explorer"),
++// 	ctorDescriptor: new SyncDescriptor(TestingExplorerView),
++// 	canToggleVisibility: true,
++// 	canMoveView: true,
++// 	weight: 80,
++// 	order: -999,
++// 	containerIcon: testingViewIcon,
++// 	when: ContextKeyExpr.greater(TestingContextKeys.providerCount.key, 0),
++// }, {
++// 	id: Testing.CoverageViewId,
++// 	name: localize2('testCoverage', "Test Coverage"),
++// 	ctorDescriptor: new SyncDescriptor(TestCoverageView),
++// 	canToggleVisibility: true,
++// 	canMoveView: true,
++// 	weight: 80,
++// 	order: -998,
++// 	containerIcon: testingViewIcon,
++// 	when: TestingContextKeys.isTestCoverageOpen,
++// }], viewContainer);
++
++// allTestActions.forEach(registerAction2);
+ registerAction2(OpenMessageInEditorAction);
+ registerAction2(GoToPreviousMessageAction);
+ registerAction2(GoToNextMessageAction);

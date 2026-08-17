@@ -34,3 +34,4 @@ custom-git-logic.diff
 copy_paste.diff
 terminal_keybinding.diff
 disable-terminal.diff
+disable-testing-and-run.diff
