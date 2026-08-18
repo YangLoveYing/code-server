@@ -1,0 +1,308 @@
+Disable proxy routes by commenting out the implementation
+
+This patch comments out (rather than deletes) all proxy-related code in
+code-server, providing a more thorough disable than the --disable-proxy flag
+which only short-circuits handlers to return 403.
+
+With this patch applied:
+
+- /proxy/:port and /absproxy/:port routes are not registered, so requests fall
+  through to the 404 catch-all in routes/index.ts
+- domain-based proxy middleware (domainProxy.router / wsRouter) is not mounted
+- createProxyServer() in src/node/proxy.ts is not invoked, so the http-proxy
+  instance and its event handlers (error/proxyReq/proxyRes) are not created
+- ensureProxyEnabled() / proxyEnabled() in http.ts are left intact as dead code
+  for an easy re-enable path
+
+To verify:
+
+1. Apply: quilt push disable-proxy.diff
+2. Start: code-server --auth none
+3. curl -i http://localhost:8080/proxy/3000/
+   - Expected: 404 Not Found (NOT 403)
+4. Re-enable: quilt pop disable-proxy.diff
+
+This does NOT touch lib/vscode. The proxy-uri.diff patch is independent and
+will still inject VSCODE_PROXY_URI into terminals, but following those URLs
+will now return 404.
+
+Compile-fix notes (tsconfig has noUnusedLocals):
+- index.ts: also comment out `import type { WebsocketRequest }` (no longer used)
+- pathProxy.ts: also comment out `getProxyTarget` (no callers left)
+
+Index: code-server/src/node/proxy.ts
+===================================================================
+--- code-server.orig/src/node/proxy.ts
++++ code-server/src/node/proxy.ts
+@@ -1,42 +1,42 @@
+-import * as cookie from "cookie"
+-import type { Request } from "express"
+-import proxyServer from "http-proxy"
+-import { getCookieSessionName, HttpCode } from "../common/http"
+-
+-export const proxy = proxyServer.createProxyServer({})
+-
+-// The error handler catches when the proxy fails to connect (for example when
+-// there is nothing running on the target port).
+-proxy.on("error", (error, _, res) => {
+-  // This could be for either a web socket or a regular request.  Despite what
+-  // the types say, writeHead() will not exist on web socket requests (nor will
+-  // status() from Express).  But writing out the code manually does not work
+-  // for regular requests thus the branching behavior.
+-  if (typeof res.writeHead !== "undefined") {
+-    res.writeHead(HttpCode.ServerError)
+-    res.end(error.message)
+-  } else {
+-    res.end(`HTTP/1.1 ${HttpCode.ServerError} ${error.message}\r\n\r\n`)
+-  }
+-})
+-
+-// Strip the code-server cookie if it exists to avoid transmitting the cookie
+-// to potentially malicious local ports.
+-proxy.on("proxyReq", (preq, req) => {
+-  const cookieSessionName = getCookieSessionName((req as Request).args["cookie-suffix"])
+-  preq.setHeader(
+-    "Cookie",
+-    cookie.stringifyCookie({
+-      ...(req as Request).cookies,
+-      [cookieSessionName]: undefined,
+-    }),
+-  )
+-})
+-
+-// Intercept the response to rewrite absolute redirects against the base path.
+-// Is disabled when the request has no base path which means /absproxy is in use.
+-proxy.on("proxyRes", (res, req) => {
+-  if (res.headers.location && res.headers.location.startsWith("/") && (req as any).base) {
+-    res.headers.location = (req as any).base + res.headers.location
+-  }
+-})
++// import * as cookie from "cookie"
++// import type { Request } from "express"
++// import proxyServer from "http-proxy"
++// import { getCookieSessionName, HttpCode } from "../common/http"
++// 
++// export const proxy = proxyServer.createProxyServer({})
++// 
++// // The error handler catches when the proxy fails to connect (for example when
++// // there is nothing running on the target port).
++// proxy.on("error", (error, _, res) => {
++//   // This could be for either a web socket or a regular request.  Despite what
++//   // the types say, writeHead() will not exist on web socket requests (nor will
++//   // status() from Express).  But writing out the code manually does not work
++//   // for regular requests thus the branching behavior.
++//   if (typeof res.writeHead !== "undefined") {
++//     res.writeHead(HttpCode.ServerError)
++//     res.end(error.message)
++//   } else {
++//     res.end(`HTTP/1.1 ${HttpCode.ServerError} ${error.message}\r\n\r\n`)
++//   }
++// })
++// 
++// // Strip the code-server cookie if it exists to avoid transmitting the cookie
++// // to potentially malicious local ports.
++// proxy.on("proxyReq", (preq, req) => {
++//   const cookieSessionName = getCookieSessionName((req as Request).args["cookie-suffix"])
++//   preq.setHeader(
++//     "Cookie",
++//     cookie.stringifyCookie({
++//       ...(req as Request).cookies,
++//       [cookieSessionName]: undefined,
++//     }),
++//   )
++// })
++// 
++// // Intercept the response to rewrite absolute redirects against the base path.
++// // Is disabled when the request has no base path which means /absproxy is in use.
++// proxy.on("proxyRes", (res, req) => {
++//   if (res.headers.location && res.headers.location.startsWith("/") && (req as any).base) {
++//     res.headers.location = (req as any).base + res.headers.location
++//   }
++// })
+Index: code-server/src/node/routes/domainProxy.ts
+===================================================================
+--- code-server.orig/src/node/routes/domainProxy.ts
++++ code-server/src/node/routes/domainProxy.ts
+@@ -1,7 +1,7 @@
+ import { Request, Router } from "express"
+ import { HttpCode, HttpError } from "../../common/http"
+ import { getHost, ensureProxyEnabled, authenticated, ensureAuthenticated, ensureOrigin, redirect, self } from "../http"
+-import { proxy } from "../proxy"
++// import { proxy } from "../proxy"
+ import { Router as WsRouter } from "../wsRouter"
+ 
+ export const router = Router()
+@@ -94,10 +94,10 @@ router.all(/.*/, async (req, res, next)
+     throw new HttpError("Unauthorized", HttpCode.Unauthorized)
+   }
+ 
+-  proxy.web(req, res, {
+-    ignorePath: true,
+-    target: `http://0.0.0.0:${port}${req.originalUrl}`,
+-  })
++//   proxy.web(req, res, {
++//     ignorePath: true,
++//     target: `http://0.0.0.0:${port}${req.originalUrl}`,
++//   })
+ })
+ 
+ export const wsRouter = WsRouter()
+@@ -111,8 +111,8 @@ wsRouter.ws(/.*/, async (req, _, next) =
+   ensureProxyEnabled(req)
+   ensureOrigin(req)
+   await ensureAuthenticated(req)
+-  proxy.ws(req, req.ws, req.head, {
+-    ignorePath: true,
+-    target: `http://0.0.0.0:${port}${req.originalUrl}`,
+-  })
++//   proxy.ws(req, req.ws, req.head, {
++//     ignorePath: true,
++//     target: `http://0.0.0.0:${port}${req.originalUrl}`,
++//   })
+ })
+Index: code-server/src/node/routes/index.ts
+===================================================================
+--- code-server.orig/src/node/routes/index.ts
++++ code-server/src/node/routes/index.ts
+@@ -15,13 +15,13 @@ import { redirect } from "../http"
+ import { CoderSettings, SettingsProvider } from "../settings"
+ import { UpdateProvider } from "../update"
+ import { getMediaMime, paths } from "../util"
+-import type { WebsocketRequest } from "../wsRouter"
+-import * as domainProxy from "./domainProxy"
++// import type { WebsocketRequest } from "../wsRouter"
++// import * as domainProxy from "./domainProxy"
+ import { errorHandler, wsErrorHandler } from "./errors"
+ import * as health from "./health"
+ import * as login from "./login"
+ import * as logout from "./logout"
+-import * as pathProxy from "./pathProxy"
++// import * as pathProxy from "./pathProxy"
+ import * as update from "./update"
+ import * as vscode from "./vscode"
+ 
+@@ -107,30 +107,30 @@ export const register = async (
+     res.send(await fs.readFile(resourcePath))
+   })
+ 
+-  app.router.use("/", domainProxy.router)
+-  app.wsRouter.use("/", domainProxy.wsRouter.router)
+-
+-  app.router.all("/proxy/:port{/*path}", async (req, res) => {
+-    await pathProxy.proxy(req, res)
+-  })
+-  app.wsRouter.get("/proxy/:port{/*path}", async (req) => {
+-    await pathProxy.wsProxy(req as unknown as WebsocketRequest)
+-  })
++//   app.router.use("/", domainProxy.router)
++//   app.wsRouter.use("/", domainProxy.wsRouter.router)
++// 
++//   app.router.all("/proxy/:port{/*path}", async (req, res) => {
++//     await pathProxy.proxy(req, res)
++//   })
++//   app.wsRouter.get("/proxy/:port{/*path}", async (req) => {
++//     await pathProxy.wsProxy(req as unknown as WebsocketRequest)
++//   })
+   // These two routes pass through the path directly.
+   // So the proxied app must be aware it is running
+   // under /absproxy/<someport>/
+-  app.router.all("/absproxy/:port{/*path}", async (req, res) => {
+-    await pathProxy.proxy(req, res, {
+-      passthroughPath: true,
+-      proxyBasePath: args["abs-proxy-base-path"],
+-    })
+-  })
+-  app.wsRouter.get("/absproxy/:port{/*path}", async (req) => {
+-    await pathProxy.wsProxy(req as unknown as WebsocketRequest, {
+-      passthroughPath: true,
+-      proxyBasePath: args["abs-proxy-base-path"],
+-    })
+-  })
++//   app.router.all("/absproxy/:port{/*path}", async (req, res) => {
++//     await pathProxy.proxy(req, res, {
++//       passthroughPath: true,
++//       proxyBasePath: args["abs-proxy-base-path"],
++//     })
++//   })
++//   app.wsRouter.get("/absproxy/:port{/*path}", async (req) => {
++//     await pathProxy.wsProxy(req as unknown as WebsocketRequest, {
++//       passthroughPath: true,
++//       proxyBasePath: args["abs-proxy-base-path"],
++//     })
++//   })
+ 
+   app.router.use(express.json())
+   app.router.use(express.urlencoded({ extended: true }))
+Index: code-server/src/node/routes/pathProxy.ts
+===================================================================
+--- code-server.orig/src/node/routes/pathProxy.ts
++++ code-server/src/node/routes/pathProxy.ts
+@@ -2,24 +2,24 @@ import { Request, Response } from "expre
+ import * as path from "path"
+ import { HttpCode, HttpError } from "../../common/http"
+ import { ensureProxyEnabled, authenticated, ensureAuthenticated, ensureOrigin, redirect, self } from "../http"
+-import { proxy as _proxy } from "../proxy"
++// import { proxy as _proxy } from "../proxy"
+ import type { WebsocketRequest } from "../wsRouter"
+ 
+-const getProxyTarget = (
+-  req: Request,
+-  opts?: {
+-    proxyBasePath?: string
+-  },
+-): string => {
+-  // If there is a base path, strip it out.
+-  const base = (req as any).base || ""
+-  // Cast since we only have one port param.
+-  const port = parseInt(req.params.port as string, 10)
+-  if (isNaN(port)) {
+-    throw new HttpError("Invalid port", HttpCode.BadRequest)
+-  }
+-  return `http://0.0.0.0:${port}${opts?.proxyBasePath || ""}/${req.originalUrl.slice(base.length)}`
+-}
++// const getProxyTarget = (
++//   req: Request,
++//   opts?: {
++//     proxyBasePath?: string
++//   },
++// ): string => {
++//   // If there is a base path, strip it out.
++//   const base = (req as any).base || ""
++//   // Cast since we only have one port param.
++//   const port = parseInt(req.params.port as string, 10)
++//   if (isNaN(port)) {
++//     throw new HttpError("Invalid port", HttpCode.BadRequest)
++//   }
++//   return `http://0.0.0.0:${port}${opts?.proxyBasePath || ""}/${req.originalUrl.slice(base.length)}`
++// }
+ 
+ export async function proxy(
+   req: Request,
+@@ -49,10 +49,10 @@ export async function proxy(
+     ;(req as any).base = req.path.split(path.sep).slice(0, 3).join(path.sep)
+   }
+ 
+-  _proxy.web(req, res, {
+-    ignorePath: true,
+-    target: getProxyTarget(req, opts),
+-  })
++//   _proxy.web(req, res, {
++//     ignorePath: true,
++//     target: getProxyTarget(req, opts),
++//   })
+ }
+ 
+ export async function wsProxy(
+@@ -71,8 +71,8 @@ export async function wsProxy(
+     ;(req as any).base = req.path.split(path.sep).slice(0, 3).join(path.sep)
+   }
+ 
+-  _proxy.ws(req, req.ws, req.head, {
+-    ignorePath: true,
+-    target: getProxyTarget(req, opts),
+-  })
++//   _proxy.ws(req, req.ws, req.head, {
++//     ignorePath: true,
++//     target: getProxyTarget(req, opts),
++//   })
+ }
