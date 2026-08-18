@@ -31,7 +31,7 @@ x-service 会话查询接口：`GET {host}/api/v1/sessions/{session-id}/detail`�
 | x-service host 配置 | 按 `run_env` cookie 映射 host 表；run_env 缺失或未命中时回退默认 host |
 | folder 缺失 / 为空 / 非绝对路径 | 400 Bad Request |
 | workspace 参数 / last-opened 重定向 | 新模式下禁用（workspace 参数 400；.code-workspace 可引用任意目录，放行会绕过校验） |
-| x-service 异常映射 | 返回 401 → 401；非 SUC0000 / 无 artifactsPath → 401；网络错误 / 超时 / 5xx → 502 |
+| x-service 异常映射 | 返回 401 → 401；返回 404 → 401（会话不存在）；非 SUC0000 / 无 artifactsPath → 401；网络错误 / 超时 / 5xx → 502 |
 | folder 比对 | 双方 `path.normalize` + 去尾部斜杠后，用 `path.relative` 判断 folder 为 artifactsPath 本身或其子目录；前缀相同的兄弟目录（如 /proj 与 /proj2）不放行 |
 | 错误响应格式 | 复用现有 `errorHandler` / `wsErrorHandler`（浏览器 HTML 错误页，XHR/WS 纯文本） |
 
@@ -164,6 +164,7 @@ x-service-timeout: 10000
 
 - `GET ${host}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`（host 含协议），header `id-token: <token>`，`AbortSignal.timeout(timeout)`。
 - `returnCode !== "SUC0000"` 或 `data.artifactsPath` 缺失 → 抛 `SessionNotFoundError`。
+- x-service 返回 404（会话不存在）→ 抛 `SessionNotFoundError`。
 - 网络错误 / 超时 → 抛 `UpstreamError`。
 - x-service 返回 401 → 抛 `TokenRejectedError`。
 
@@ -237,7 +238,7 @@ GET /?folder={artifactsPath} + cookies(run_env, session_id, id_token)
 | token 畸形 | 401 | `认证信息无效` |
 | token 过期 | 401 | `认证信息已过期` |
 | x-service 返回 401 | 401 | `认证信息已被拒绝` |
-| 会话不存在 / 非 SUC0000 / 无 artifactsPath | 401 | `会话不存在或已失效` |
+| 会话不存在（HTTP 404 / 非 SUC0000 / 无 artifactsPath） | 401 | `会话不存在或已失效` |
 | folder 缺失 / 空 / 非绝对路径 | 400 | `必须携带 folder 参数` |
 | 携带 workspace 参数 | 400 | `该认证模式不支持 workspace 参数` |
 | 目录不匹配 | 403 | `无权访问该目录` |
