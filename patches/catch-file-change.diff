@@ -1,0 +1,273 @@
+Index: code-server/lib/vscode/package-lock.json
+===================================================================
+--- code-server.orig/lib/vscode/package-lock.json
++++ code-server/lib/vscode/package-lock.json
+@@ -1830,6 +1830,16 @@
+         "@microsoft/dev-tunnels-ssh-tcp": "^3.12.29"
+       }
+     },
++    "node_modules/@microsoft/dev-tunnels-connections/node_modules/uuid": {
++      "version": "3.4.0",
++      "resolved": "https://registry.npmjs.org/uuid/-/uuid-3.4.0.tgz",
++      "integrity": "sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==",
++      "deprecated": "uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).",
++      "license": "MIT",
++      "bin": {
++        "uuid": "bin/uuid"
++      }
++    },
+     "node_modules/@microsoft/dev-tunnels-connections/node_modules/vscode-jsonrpc": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-4.0.0.tgz",
+@@ -19129,16 +19139,6 @@
+       "resolved": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
+       "integrity": "sha1-RQ1Nyfpw3nMnYvvS1KKJgUGaDM8= sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="
+     },
+-    "node_modules/uuid": {
+-      "version": "3.4.0",
+-      "resolved": "https://registry.npmjs.org/uuid/-/uuid-3.4.0.tgz",
+-      "integrity": "sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==",
+-      "deprecated": "uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).",
+-      "license": "MIT",
+-      "bin": {
+-        "uuid": "bin/uuid"
+-      }
+-    },
+     "node_modules/v8-to-istanbul": {
+       "version": "9.3.0",
+       "resolved": "https://registry.npmjs.org/v8-to-istanbul/-/v8-to-istanbul-9.3.0.tgz",
+Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+@@ -16,10 +16,21 @@ import { IServerEnvironmentService } fro
+ import { AbstractDiskFileSystemProviderChannel, AbstractSessionFileWatcher, ISessionFileWatcher } from '../../platform/files/node/diskFileSystemProviderServer.js';
+ import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
+ import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
++import * as http from 'http';
++
++// ─── XService Environment URL Mapping ──────────
++const ENV_SERVICE_URLS: Record<string, string> = {
++	dev: 'http://x-service.paas.cmbchina.cn',
++	st:  'http://x-service.paasst.cmbchina.cn',
++	oa:  'http://xservice.paasuat.cmbchina.cn',
++	prd: 'http://xservice-prd.paas.cmbchina.cn',
++};
++const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+ 
+ export class RemoteAgentFileSystemProviderChannel extends AbstractDiskFileSystemProviderChannel<RemoteAgentConnectionContext> {
+ 
+ 	private readonly uriTransformerCache = new Map<string, IURITransformer>();
++	private readonly authCache = new Map<string, { artifactsPath: string; expireAt: number }>();
+ 
+ 	constructor(
+ 		logService: ILogService,
+@@ -31,6 +42,208 @@ export class RemoteAgentFileSystemProvid
+ 		this._register(this.provider);
+ 	}
+ 
++	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
++
++	//#region Auth: Cache helpers
++
++	private getCachedArtifactsPath(sessionID: string): string | null {
++		const entry = this.authCache.get(sessionID);
++		if (entry && entry.expireAt > Date.now()) {
++			return entry.artifactsPath;
++		}
++		this.authCache.delete(sessionID);
++		return null;
++	}
++
++	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
++		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
++	}
++
++	//#endregion
++
++	//#region Auth: JWT validation
++
++	private isTokenExpired(idToken: string): boolean {
++		try {
++			const parts = idToken.split('.');
++			if (parts.length !== 3) {
++				return true;
++			}
++			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
++			if (!payload.exp || typeof payload.exp !== 'number') {
++				return true;
++			}
++			return payload.exp * 1000 < Date.now();
++		} catch {
++			return true;
++		}
++	}
++
++	//#endregion
++
++	//#region Auth: XService API
++
++	private fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
++		return new Promise((resolve, reject) => {
++			const baseUrl = ENV_SERVICE_URLS[runEnv];
++			if (!baseUrl) {
++				return reject(new Error(`Unknown run_env: ${runEnv}`));
++			}
++
++			const url = `${baseUrl}/api/v1/sessions/${sessionID}/detail?healthCheck=true`;
++			const req = http.get(url, {
++				headers: { 'Id-Token': idToken },
++				timeout: 10000,
++			}, (res) => {
++				let data = '';
++				res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
++				res.on('end', () => {
++					try {
++						const json = JSON.parse(data);
++						if (json.returnCode === 'SUC0000' && json.data?.artifactsPath) {
++							resolve(json.data.artifactsPath);
++						} else {
++							reject(new Error(`XService returned: ${json.returnCode}`));
++						}
++					} catch (e) {
++						reject(new Error(`Failed to parse XService response: ${(e as Error).message}`));
++					}
++				});
++			});
++
++			req.on('error', (e: Error) => reject(new Error(`XService request failed: ${e.message}`)));
++			req.on('timeout', () => {
++				req.destroy();
++				reject(new Error('XService request timed out'));
++			});
++		});
++	}
++
++	//#endregion
++
++	//#region File Change: Record to XService API
++
++	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
++		const baseUrl = ENV_SERVICE_URLS[runEnv];
++		if (!baseUrl) {
++			this.logService.error(`[FileTracker] Unknown run_env: ${runEnv}`);
++			return;
++		}
++
++		const url = `${baseUrl}/api/v1/backendPromptMng/backend-prompts`;
++		const postData = JSON.stringify({
++			data: [{
++				sessionId: sessionID,
++				content: `${filePath} 文件内容发生变化`,
++				origin: 'code-server',
++				type: 'fileChange'
++			}]
++		});
++
++		const req = http.request(url, {
++			method: 'POST',
++			headers: {
++				'Id-Token': idToken,
++				'Content-Type': 'application/json',
++				'Content-Length': Buffer.byteLength(postData)
++			},
++			timeout: 10000
++		}, (res) => {
++			let data = '';
++			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
++			res.on('end', () => {
++				if (res.statusCode !== 200) {
++					this.logService.error(`[FileTracker] API request failed with status ${res.statusCode}: ${data}`);
++				}
++			});
++		});
++
++		req.on('error', (e: Error) => {
++			this.logService.error(`[FileTracker] API request failed: ${e.message}`);
++		});
++
++		req.on('timeout', () => {
++			req.destroy();
++			this.logService.error('[FileTracker] API request timed out');
++		});
++
++		req.write(postData);
++		req.end();
++	}
++
++	//#endregion
++
++	//#region Auth: Main entry
++
++	private async checkFileAccess(ctx: RemoteAgentConnectionContext, filePath: string): Promise<void> {
++		const { sessionID, idToken, runEnv } = ctx;
++
++		if (!sessionID || !idToken) {
++			throw new Error('Access denied: missing sessionID or ID-Token');
++		}
++
++		// 1. 认证：JWT 格式校验 + 过期检查
++		if (this.isTokenExpired(idToken)) {
++			throw new Error('Access denied: ID-Token is invalid or expired');
++		}
++
++		// 2. 缓存：优先从缓存获取允许访问的路径
++		let artifactsPath = this.getCachedArtifactsPath(sessionID);
++
++		if (!artifactsPath) {
++			// 3. 鉴权：调用 XService 接口获取 artifactsPath
++			try {
++				artifactsPath = await this.fetchArtifactsPath(runEnv || 'dev', sessionID, idToken);
++				this.setCachedArtifactsPath(sessionID, artifactsPath);
++			} catch (e) {
++				this.logService.error(`[Auth] Failed to fetch session detail: ${(e as Error).message}`);
++				throw new Error('Access denied: unable to verify permissions');
++			}
++		}
++
++		// 4. 鉴权：检查文件路径是否在允许的目录内
++		const normalizedPath = filePath.endsWith('/') ? filePath.slice(0, -1) : filePath;
++		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
++		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
++			throw new Error(`Access denied: path ${filePath} is outside allowed directory`);
++		}
++	}
++
++	//#endregion
++
++	//#region IPC Interception
++
++	override async call<TResult>(ctx: RemoteAgentConnectionContext, command: string, args: unknown[]): Promise<TResult> {
++		// 路径类命令（args[0] 是 UriComponents 对象）需要鉴权
++		// fd 类命令（args[0] 是数字）跳过鉴权，因为 open/readFile 时已鉴权
++		let fp: string | undefined;
++		if (args[0] && typeof args[0] === 'object') {
++			const uriTransformer = this.getUriTransformer(ctx);
++			const _resource = args[0] as UriComponents;
++			const resource = this.transformIncoming(uriTransformer, _resource);
++			fp = resource.fsPath;
++
++			// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
++			await this.checkFileAccess(ctx, fp);
++		}
++
++		// 原有的 writeFile 记录逻辑（改为调用 API）
++		if (command === 'writeFile' && fp && typeof fp === 'string') {
++			if (RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
++				const { sessionID, idToken, runEnv } = ctx;
++				if (sessionID && idToken && runEnv) {
++					this.recordFileChange(runEnv, sessionID, idToken, fp);
++				} else {
++					this.logService.info('[FileTracker] Skipping file change record: missing sessionID, idToken, or runEnv in context');
++				}
++			}
++		}
++
++		return super.call(ctx, command, args);
++	}
++
++	//#endregion
++
+ 	protected override getUriTransformer(ctx: RemoteAgentConnectionContext): IURITransformer {
+ 		let transformer = this.uriTransformerCache.get(ctx.remoteAuthority);
+ 		if (!transformer) {

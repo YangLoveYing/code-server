@@ -74,6 +74,11 @@ export const fetchSessionDetail = async (
   if (response.status === HttpCode.Unauthorized) {
     throw new TokenRejectedError(`x-service rejected the id-token (${response.status})`)
   }
+  // A session is a resource on this endpoint, so 404 means the session does
+  // not exist (a definitive result), not a transient upstream failure.
+  if (response.status === HttpCode.NotFound) {
+    throw new SessionNotFoundError("session not found in x-service (404)")
+  }
   if (!response.ok) {
     throw new UpstreamError(`x-service returned ${response.status}`)
   }

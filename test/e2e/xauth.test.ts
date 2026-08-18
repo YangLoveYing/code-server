@@ -21,6 +21,10 @@ const startMockXService = (artifactsPath: string): http.Server => {
     if (sessionId === "sess-hang") {
       return // Never respond; the client should time out.
     }
+    if (sessionId === "sess-404") {
+      res.writeHead(404, { "Content-Type": "application/json" })
+      return res.end(JSON.stringify({ returnCode: "ERR404", data: {} }))
+    }
     const body =
       sessionId === "sess-gone"
         ? { returnCode: "ERR404", data: {} }
@@ -134,6 +138,17 @@ describe("x-token auth", args, {}, () => {
       page,
       `/?folder=${encodeURIComponent(artifactsPath)}`,
       sessionCookies(VALID_TOKEN, "sess-gone"),
+    )
+    expect(res.status()).toBe(401)
+    expect(await res.text()).toContain("会话不存在或已失效")
+  })
+
+  test("should reject an unknown session via HTTP 404 (401)", async ({ codeServer, page }) => {
+    const res = await get(
+      codeServer,
+      page,
+      `/?folder=${encodeURIComponent(artifactsPath)}`,
+      sessionCookies(VALID_TOKEN, "sess-404"),
     )
     expect(res.status()).toBe(401)
     expect(await res.text()).toContain("会话不存在或已失效")

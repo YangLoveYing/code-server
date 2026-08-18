@@ -28,9 +28,10 @@ app-name.diff
 ui-hidden.diff
 parent-postmessage.diff
 script-load-error.diff
+custom-git-logic.diff
+catch-file-change.diff
 open-file.diff
 hide_chat.diff
-custom-git-logic.diff
 copy_paste.diff
 terminal_keybinding.diff
 disable-terminal.diff
