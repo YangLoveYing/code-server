@@ -119,7 +119,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +import * as https from 'https';
  import { realpath } from 'fs/promises';
  import { dirname, join, resolve } from 'path';
-+import { ENV_SERVICE_URLS, getArtifactsPath } from './xserviceAuth.js';
++import { ENV_SERVICE_URLS, getArtifactsPath, TLS_REQUEST_OPTIONS } from './xserviceAuth.js';
  
  // 解析真实路径：逐段解析，与内核路径解析语义一致
  // —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
@@ -258,7 +258,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  	//#region File Change: Record to XService API
  
  	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
-@@ -177,7 +130,7 @@ export class RemoteAgentFileSystemProvid
+@@ -177,14 +130,15 @@ export class RemoteAgentFileSystemProvid
  			}]
  		});
  
@@ -267,7 +267,16 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  			method: 'POST',
  			headers: {
  				'Id-Token': idToken,
-@@ -219,26 +172,16 @@ export class RemoteAgentFileSystemProvid
+ 				'Content-Type': 'application/json',
+ 				'Content-Length': Buffer.byteLength(postData)
+ 			},
+-			timeout: 10000
++			timeout: 10000,
++			...TLS_REQUEST_OPTIONS,
+ 		}, (res) => {
+ 			let data = '';
+ 			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+@@ -219,26 +173,16 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: missing sessionID or ID-Token');
  		}
  
@@ -302,7 +311,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		let realFilePath: string;
  		try {
  			realFilePath = await resolveRealPath(filePath);
-@@ -247,7 +190,7 @@ export class RemoteAgentFileSystemProvid
+@@ -247,7 +191,7 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: unable to resolve real path');
  		}
  
@@ -311,7 +320,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		const normalizedPath = realFilePath.endsWith('/') ? realFilePath.slice(0, -1) : realFilePath;
  		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
  		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
-@@ -269,8 +212,12 @@ export class RemoteAgentFileSystemProvid
+@@ -269,8 +213,12 @@ export class RemoteAgentFileSystemProvid
  			const resource = this.transformIncoming(uriTransformer, _resource);
  			fp = resource.fsPath;
  
@@ -330,7 +339,7 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 ===================================================================
 --- /dev/null
 +++ code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,131 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) Microsoft Corporation. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -341,6 +350,10 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 +// ExtensionHostConnection（扩展宿主 env 注入）复用，保证同进程内缓存一致。
 +
 +import * as https from 'https';
++
++// 内网自签名/缺少 CA 证书场景：直接跳过 TLS 证书校验。
++// 注意：跳过校验后连接无法防范中间人篡改，仅可在可信内网使用。
++export const TLS_REQUEST_OPTIONS: https.RequestOptions = { rejectUnauthorized: false };
 +
 +// ─── XService Environment URL Mapping ──────────
 +export const ENV_SERVICE_URLS: Record<string, string> = {
@@ -404,6 +417,7 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 +		const req = https.get(url, {
 +			headers: { 'Id-Token': idToken },
 +			timeout: 10000,
++			...TLS_REQUEST_OPTIONS,
 +		}, (res) => {
 +			let data = '';
 +			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
