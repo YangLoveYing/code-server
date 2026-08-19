@@ -102,6 +102,15 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 ===================================================================
 --- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
 +++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+@@ -6,7 +6,7 @@
+ import { Emitter } from '../../base/common/event.js';
+ import { URI, UriComponents } from '../../base/common/uri.js';
+ import { IURITransformer } from '../../base/common/uriIpc.js';
+-import { IFileChange } from '../../platform/files/common/files.js';
++import { IFileChange, IFileOpenOptions } from '../../platform/files/common/files.js';
+ import { ILogService } from '../../platform/log/common/log.js';
+ import { createURITransformer } from '../../base/common/uriTransformer.js';
+ import { RemoteAgentConnectionContext } from '../../platform/remote/common/remoteAgentEnvironment.js';
 @@ -16,9 +16,10 @@ import { IServerEnvironmentService } fro
  import { AbstractDiskFileSystemProviderChannel, AbstractSessionFileWatcher, ISessionFileWatcher } from '../../platform/files/node/diskFileSystemProviderServer.js';
  import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
@@ -134,7 +143,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  
  	constructor(
  		logService: ILogService,
-@@ -81,83 +72,6 @@ export class RemoteAgentFileSystemProvid
+@@ -81,83 +72,45 @@ export class RemoteAgentFileSystemProvid
  
  	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
  
@@ -152,13 +161,33 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 -	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
 -		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
 -	}
--
++	// 白名单目录：放行该目录下所有文件的只读操作（写/删/移仍走正常鉴权）
++	private static readonly READ_WHITELIST_DIR = '/home/x/.code-server';
+ 
 -	//#endregion
--
++	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
++	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
+ 
 -	//#region Auth: JWT validation
--
++	/**
++	 * 只读白名单检查：路径（解析软链接/.. 后的真实路径）位于白名单目录内时放行。
++	 * 仅适用于只读命令；'open' 需额外确认非写模式；路径解析失败时不放行（fail-close）。
++	 */
++	private async isWhitelistedRead(filePath: string, command: string, args: unknown[]): Promise<boolean> {
++		const isReadOnly = RemoteAgentFileSystemProviderChannel.READONLY_COMMANDS.has(command);
++		let isRead = isReadOnly;
++		if (!isRead && command === 'open') {
++			// open 与底层语义对齐：仅当 create !== true 时为只读打开
++			const opts = args[1] as IFileOpenOptions | undefined;
++			isRead = !opts || opts.create !== true;
++		}
++		if (!isRead) {
++			return false;
++		}
+ 
 -	private isTokenExpired(idToken: string): boolean {
--		try {
++		let realPath: string;
+ 		try {
 -			const parts = idToken.split('.');
 -			if (parts.length !== 3) {
 -				return true;
@@ -170,11 +199,15 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 -			return payload.exp * 1000 < Date.now();
 -		} catch {
 -			return true;
--		}
++			realPath = await resolveRealPath(filePath);
++		} catch (e) {
++			this.logService.error(`[Auth] Whitelist: failed to resolve real path of ${filePath}: ${(e as Error).message}`);
++			return false;
+ 		}
 -	}
 -
 -	//#endregion
--
+ 
 -	//#region Auth: XService API
 -
 -	private fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
@@ -211,14 +244,21 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 -				reject(new Error('XService request timed out'));
 -			});
 -		});
--	}
--
++		const whitelist = RemoteAgentFileSystemProviderChannel.READ_WHITELIST_DIR;
++		const normalized = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
++		const inWhitelist = normalized === whitelist || normalized.startsWith(whitelist + '/');
++		if (inWhitelist) {
++			this.logService.info(`[Auth] Whitelist: allow read '${command}' on ${filePath}`);
++		}
++		return inWhitelist;
+ 	}
+ 
 -	//#endregion
 -
  	//#region File Change: Record to XService API
  
  	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
-@@ -177,14 +91,15 @@ export class RemoteAgentFileSystemProvid
+@@ -177,14 +130,15 @@ export class RemoteAgentFileSystemProvid
  			}]
  		});
  
@@ -236,7 +276,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		}, (res) => {
  			let data = '';
  			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-@@ -219,26 +134,16 @@ export class RemoteAgentFileSystemProvid
+@@ -219,26 +173,16 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: missing sessionID or ID-Token');
  		}
  
@@ -271,7 +311,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		let realFilePath: string;
  		try {
  			realFilePath = await resolveRealPath(filePath);
-@@ -247,7 +152,7 @@ export class RemoteAgentFileSystemProvid
+@@ -247,7 +191,7 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: unable to resolve real path');
  		}
  
@@ -280,6 +320,21 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		const normalizedPath = realFilePath.endsWith('/') ? realFilePath.slice(0, -1) : realFilePath;
  		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
  		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
+@@ -269,8 +213,12 @@ export class RemoteAgentFileSystemProvid
+ 			const resource = this.transformIncoming(uriTransformer, _resource);
+ 			fp = resource.fsPath;
+ 
+-			// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
+-			await this.checkFileAccess(ctx, fp);
++			// 白名单目录（/home/x/.code-server）下的只读操作直接放行
++			const whitelisted = await this.isWhitelistedRead(fp, command, args);
++			if (!whitelisted) {
++				// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
++				await this.checkFileAccess(ctx, fp);
++			}
+ 		}
+ 
+ 		// 原有的 writeFile 记录逻辑（改为调用 API）
 Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 ===================================================================
 --- /dev/null
