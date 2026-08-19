@@ -15,19 +15,6 @@
   font-size: 1.2rem;
 }
 
-.error-display > .links {
-  margin-top: 16px;
-}
-
-.error-display > .links > .link {
-  color: rgb(87, 114, 245);
-  text-decoration: none;
-}
-
-.error-display > .links > .link:hover {
-  text-decoration: underline;
-}
-
 .error-display .success {
   color: green;
 }

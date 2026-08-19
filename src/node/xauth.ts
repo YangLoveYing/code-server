@@ -1,4 +1,5 @@
 import { field, logger } from "@coder/logger"
+import * as crypto from "crypto"
 import * as express from "express"
 import * as http from "http"
 import * as https from "https"
@@ -70,10 +71,14 @@ export const fetchSessionDetail = async (
   const url = `${host.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`
   const request = url.startsWith("https://") ? https.request : http.request
   // rejectUnauthorized is only read by https; harmless for plain http.
+  // x-service TLS infrastructure may use legacy renegotiation (e.g. nginx
+  // ssl_verify_client), which OpenSSL 3 rejects by default.
   const options: https.RequestOptions = {
     headers: { "id-token": idToken },
     timeout,
     rejectUnauthorized: false,
+    secureOptions:
+      crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
   }
 
   let response: http.IncomingMessage

@@ -70,7 +70,7 @@ export enum AuthType {
 
 ⚠️ host **必须携带协议**（`http://` 或 `https://`）：代码不写死前缀，`fetchSessionDetail` 直接用 `${host}` 拼 URL（xauth.ts）。未带协议的 host 会在启动时直接报错（`setDefaults` 校验）。
 
-https 支持：传输层用 `node:http/https`（xauth.ts），TLS 证书**不校验**（`rejectUnauthorized: false`，兼容自签名证书的内网部署），且不跟随重定向（3xx 归入 502 上游异常）。
+https 支持：传输层用 `node:http/https`（xauth.ts），TLS 证书**不校验**（`rejectUnauthorized: false`，兼容自签名证书的内网部署），并开启 `SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | SSL_OP_LEGACY_SERVER_CONNECT`（x-service 链路存在 legacy renegotiation，OpenSSL 3 默认拒绝，否则报 `EPROTO ... unsafe legacy renegotiation disabled`），且不跟随重定向（3xx 归入 502 上游异常）。
 
 #### 4.2.1 三种配置通道
 
@@ -164,7 +164,7 @@ x-service-timeout: 10000
 
 ### 5.2 `fetchSessionDetail(host, sessionId, idToken, timeout)`
 
-- `GET ${host}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`（host 含协议），header `id-token: <token>`，socket 超时 `timeout`。传输层为 `node:http/https`，`rejectUnauthorized: false`（不校验 TLS 证书），不跟随重定向。
+- `GET ${host}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`（host 含协议），header `id-token: <token>`，socket 超时 `timeout`。传输层为 `node:http/https`，`rejectUnauthorized: false`（不校验 TLS 证书），`secureOptions` 允许 legacy renegotiation，不跟随重定向。
 - `returnCode !== "SUC0000"` 或 `data.artifactsPath` 缺失 → 抛 `SessionNotFoundError`。
 - x-service 返回 404（会话不存在）→ 抛 `SessionNotFoundError`。
 - 网络错误 / 超时 / 3xx → 抛 `UpstreamError`。
