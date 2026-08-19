@@ -1,0 +1,487 @@
+Index: code-server/lib/vscode/extensions/git/src/git.ts
+===================================================================
+--- code-server.orig/lib/vscode/extensions/git/src/git.ts
++++ code-server/lib/vscode/extensions/git/src/git.ts
+@@ -699,6 +699,41 @@ export class Git {
+ 			options.cwd = sanitizePath(cwd);
+ 		}
+ 
++		// ─── 会话路径限制：git 只能操作 CS_ARTIFACTS_PATH 允许的 artifacts 目录 ───
++		const artifactsPath = process.env.CS_ARTIFACTS_PATH;
++		if (!artifactsPath) {
++			// fail-close：缺少会话授权路径时禁用所有 git 操作
++			throw new Error('git operations are disabled: session artifacts path is not available.');
++		}
++		const allowedRoot = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
++		const assertPathAllowed = (target: string, source: string): void => {
++			const resolved = path.resolve(target);
++			if (resolved !== allowedRoot && !resolved.startsWith(allowedRoot + '/')) {
++				throw new Error(`Access denied: git ${source} path '${target}' (resolved: ${resolved}) is outside the allowed directory '${allowedRoot}'.`);
++			}
++		};
++
++		// 校验 cwd（未指定时 git 继承进程工作目录，同样纳入校验）
++		assertPathAllowed(cwd ?? process.cwd(), 'cwd');
++
++		// 扫描子命令之前的全局参数：-C / --git-dir / --work-tree 可改变实际操作目录
++		for (let i = 0; i < args.length; i++) {
++			const arg = args[i];
++			if (!arg.startsWith('-')) {
++				break; // 到达子命令，子命令自身参数不参与目录校验
++			}
++			if (arg === '-C' || arg === '--git-dir' || arg === '--work-tree') {
++				if (i + 1 < args.length) {
++					assertPathAllowed(args[i + 1], arg);
++				}
++				i++; // 跳过取值
++			} else if (arg.startsWith('--git-dir=') || arg.startsWith('--work-tree=')) {
++				assertPathAllowed(arg.substring(arg.indexOf('=') + 1), arg);
++			} else if (arg === '-c' || arg === '--namespace') {
++				i++; // 带值但与目录无关的全局参数，跳过取值
++			}
++		}
++
+ 		return cp.spawn(this.path, args, options);
+ 	}
+ 
+Index: code-server/lib/vscode/src/vs/server/node/extensionHostConnection.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/extensionHostConnection.ts
++++ code-server/lib/vscode/src/vs/server/node/extensionHostConnection.ts
+@@ -20,6 +20,7 @@ import { getResolvedShellEnv } from '../
+ import { IExtensionHostStatusService } from './extensionHostStatusService.js';
+ import { getNLSConfiguration } from './remoteLanguagePacks.js';
+ import { IServerEnvironmentService } from './serverEnvironmentService.js';
++import { getArtifactsPath } from './xserviceAuth.js';
+ import { IPCExtHostConnection, SocketExtHostConnection, writeExtHostConnection } from '../../workbench/services/extensions/common/extensionHostEnv.js';
+ import { IExtHostReadyMessage, IExtHostReduceGraceTimeMessage, IExtHostSocketMessage } from '../../workbench/services/extensions/common/extensionHostProtocol.js';
+ 
+@@ -262,6 +263,23 @@ export class ExtensionHostConnection ext
+ 			const env = await buildUserEnvironment(startParams.env, true, startParams.language, this._environmentService, this._logService, this._configurationService);
+ 			removeDangerousEnvVariables(env);
+ 
++			// 会话鉴权：根据 startParams 中的会话凭证向 XService 获取本会话允许访问的
++			// artifactsPath 并注入扩展宿主 env（供 git 扩展等做路径限制）。
++			// 获取失败不阻断扩展宿主启动，但 git 等受限能力会因缺少 CS_ARTIFACTS_PATH 而 fail-close。
++			const csSessionID = startParams.env?.['CS_SESSION_ID'] || undefined;
++			const csIdToken = startParams.env?.['CS_ID_TOKEN'] || undefined;
++			const csRunEnv = startParams.env?.['CS_RUN_ENV'] || undefined;
++			if (csSessionID && csIdToken) {
++				try {
++					env.CS_ARTIFACTS_PATH = await getArtifactsPath(csSessionID, csIdToken, csRunEnv || 'dev');
++					this._log(`Resolved artifacts path for session: ${env.CS_ARTIFACTS_PATH}`);
++				} catch (error) {
++					this._logError(`Failed to resolve artifacts path for session: ${(error as Error).message}`);
++				}
++			}
++			// ID Token 仅供服务端调用 XService 使用，绝不能进入 fork 出的扩展宿主进程
++			delete env['CS_ID_TOKEN'];
++
+ 			let extHostNamedPipeServer: net.Server | null;
+ 
+ 			if (this._canSendSocket) {
+Index: code-server/lib/vscode/src/vs/server/node/remoteExtensionHostAgentServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteExtensionHostAgentServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteExtensionHostAgentServer.ts
+@@ -441,7 +441,12 @@ class RemoteExtensionHostAgentServer ext
+ 				this._logService.trace(`${logPrefix} - startParams debug port ${startParams.port}`);
+ 			}
+ 			this._logService.trace(`${logPrefix} - startParams language: ${startParams.language}`);
+-			this._logService.trace(`${logPrefix} - startParams env: ${JSON.stringify(startParams.env)}`);
++			// 日志中脱敏会话 ID Token，避免凭证泄漏
++			const startParamsEnvForLog = { ...startParams.env };
++			if (startParamsEnvForLog['CS_ID_TOKEN']) {
++				startParamsEnvForLog['CS_ID_TOKEN'] = '***';
++			}
++			this._logService.trace(`${logPrefix} - startParams env: ${JSON.stringify(startParamsEnvForLog)}`);
+ 
+ 			if (isReconnection) {
+ 				// This is a reconnection
+Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+@@ -6,7 +6,7 @@
+ import { Emitter } from '../../base/common/event.js';
+ import { URI, UriComponents } from '../../base/common/uri.js';
+ import { IURITransformer } from '../../base/common/uriIpc.js';
+-import { IFileChange } from '../../platform/files/common/files.js';
++import { IFileChange, IFileOpenOptions } from '../../platform/files/common/files.js';
+ import { ILogService } from '../../platform/log/common/log.js';
+ import { createURITransformer } from '../../base/common/uriTransformer.js';
+ import { RemoteAgentConnectionContext } from '../../platform/remote/common/remoteAgentEnvironment.js';
+@@ -16,9 +16,10 @@ import { IServerEnvironmentService } fro
+ import { AbstractDiskFileSystemProviderChannel, AbstractSessionFileWatcher, ISessionFileWatcher } from '../../platform/files/node/diskFileSystemProviderServer.js';
+ import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
+ import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
+-import * as http from 'http';
++import * as https from 'https';
+ import { realpath } from 'fs/promises';
+ import { dirname, join, resolve } from 'path';
++import { ENV_SERVICE_URLS, getArtifactsPath } from './xserviceAuth.js';
+ 
+ // 解析真实路径：逐段解析，与内核路径解析语义一致
+ // —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
+@@ -55,19 +56,9 @@ async function resolveRealPath(p: string
+ 	return tail.length > 0 ? join(current, ...tail) : current;
+ }
+ 
+-// ─── XService Environment URL Mapping ──────────
+-const ENV_SERVICE_URLS: Record<string, string> = {
+-	dev: 'http://x-service.paas.cmbchina.cn',
+-	st:  'http://x-service.paasst.cmbchina.cn',
+-	oa:  'http://xservice.paasuat.cmbchina.cn',
+-	prd: 'http://xservice-prd.paas.cmbchina.cn',
+-};
+-const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+-
+ export class RemoteAgentFileSystemProviderChannel extends AbstractDiskFileSystemProviderChannel<RemoteAgentConnectionContext> {
+ 
+ 	private readonly uriTransformerCache = new Map<string, IURITransformer>();
+-	private readonly authCache = new Map<string, { artifactsPath: string; expireAt: number }>();
+ 
+ 	constructor(
+ 		logService: ILogService,
+@@ -81,83 +72,45 @@ export class RemoteAgentFileSystemProvid
+ 
+ 	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
+ 
+-	//#region Auth: Cache helpers
+-
+-	private getCachedArtifactsPath(sessionID: string): string | null {
+-		const entry = this.authCache.get(sessionID);
+-		if (entry && entry.expireAt > Date.now()) {
+-			return entry.artifactsPath;
+-		}
+-		this.authCache.delete(sessionID);
+-		return null;
+-	}
+-
+-	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
+-		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
+-	}
++	// 白名单目录：放行该目录下所有文件的只读操作（写/删/移仍走正常鉴权）
++	private static readonly READ_WHITELIST_DIR = '/home/x/.code-server';
+ 
+-	//#endregion
++	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
++	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
+ 
+-	//#region Auth: JWT validation
++	/**
++	 * 只读白名单检查：路径（解析软链接/.. 后的真实路径）位于白名单目录内时放行。
++	 * 仅适用于只读命令；'open' 需额外确认非写模式；路径解析失败时不放行（fail-close）。
++	 */
++	private async isWhitelistedRead(filePath: string, command: string, args: unknown[]): Promise<boolean> {
++		const isReadOnly = RemoteAgentFileSystemProviderChannel.READONLY_COMMANDS.has(command);
++		let isRead = isReadOnly;
++		if (!isRead && command === 'open') {
++			// open 与底层语义对齐：仅当 create !== true 时为只读打开
++			const opts = args[1] as IFileOpenOptions | undefined;
++			isRead = !opts || opts.create !== true;
++		}
++		if (!isRead) {
++			return false;
++		}
+ 
+-	private isTokenExpired(idToken: string): boolean {
++		let realPath: string;
+ 		try {
+-			const parts = idToken.split('.');
+-			if (parts.length !== 3) {
+-				return true;
+-			}
+-			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+-			if (!payload.exp || typeof payload.exp !== 'number') {
+-				return true;
+-			}
+-			return payload.exp * 1000 < Date.now();
+-		} catch {
+-			return true;
++			realPath = await resolveRealPath(filePath);
++		} catch (e) {
++			this.logService.error(`[Auth] Whitelist: failed to resolve real path of ${filePath}: ${(e as Error).message}`);
++			return false;
+ 		}
+-	}
+-
+-	//#endregion
+ 
+-	//#region Auth: XService API
+-
+-	private fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
+-		return new Promise((resolve, reject) => {
+-			const baseUrl = ENV_SERVICE_URLS[runEnv];
+-			if (!baseUrl) {
+-				return reject(new Error(`Unknown run_env: ${runEnv}`));
+-			}
+-
+-			const url = `${baseUrl}/api/v1/sessions/${sessionID}/detail?healthCheck=true`;
+-			const req = http.get(url, {
+-				headers: { 'Id-Token': idToken },
+-				timeout: 10000,
+-			}, (res) => {
+-				let data = '';
+-				res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+-				res.on('end', () => {
+-					try {
+-						const json = JSON.parse(data);
+-						if (json.returnCode === 'SUC0000' && json.data?.artifactsPath) {
+-							resolve(json.data.artifactsPath);
+-						} else {
+-							reject(new Error(`XService returned: ${json.returnCode}`));
+-						}
+-					} catch (e) {
+-						reject(new Error(`Failed to parse XService response: ${(e as Error).message}`));
+-					}
+-				});
+-			});
+-
+-			req.on('error', (e: Error) => reject(new Error(`XService request failed: ${e.message}`)));
+-			req.on('timeout', () => {
+-				req.destroy();
+-				reject(new Error('XService request timed out'));
+-			});
+-		});
++		const whitelist = RemoteAgentFileSystemProviderChannel.READ_WHITELIST_DIR;
++		const normalized = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
++		const inWhitelist = normalized === whitelist || normalized.startsWith(whitelist + '/');
++		if (inWhitelist) {
++			this.logService.info(`[Auth] Whitelist: allow read '${command}' on ${filePath}`);
++		}
++		return inWhitelist;
+ 	}
+ 
+-	//#endregion
+-
+ 	//#region File Change: Record to XService API
+ 
+ 	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
+@@ -177,7 +130,7 @@ export class RemoteAgentFileSystemProvid
+ 			}]
+ 		});
+ 
+-		const req = http.request(url, {
++		const req = https.request(url, {
+ 			method: 'POST',
+ 			headers: {
+ 				'Id-Token': idToken,
+@@ -219,26 +172,16 @@ export class RemoteAgentFileSystemProvid
+ 			throw new Error('Access denied: missing sessionID or ID-Token');
+ 		}
+ 
+-		// 1. 认证：JWT 格式校验 + 过期检查
+-		if (this.isTokenExpired(idToken)) {
+-			throw new Error('Access denied: ID-Token is invalid or expired');
+-		}
+-
+-		// 2. 缓存：优先从缓存获取允许访问的路径
+-		let artifactsPath = this.getCachedArtifactsPath(sessionID);
+-
+-		if (!artifactsPath) {
+-			// 3. 鉴权：调用 XService 接口获取 artifactsPath（接口返回值可信，无需解析真实路径）
+-			try {
+-				artifactsPath = await this.fetchArtifactsPath(runEnv || 'dev', sessionID, idToken);
+-				this.setCachedArtifactsPath(sessionID, artifactsPath);
+-			} catch (e) {
+-				this.logService.error(`[Auth] Failed to fetch session detail: ${(e as Error).message}`);
+-				throw new Error('Access denied: unable to verify permissions');
+-			}
++		// 1. 鉴权：共享单例获取允许访问的路径（JWT 校验 + 缓存 + XService 接口）
++		let artifactsPath: string;
++		try {
++			artifactsPath = await getArtifactsPath(sessionID, idToken, runEnv || 'dev');
++		} catch (e) {
++			this.logService.error(`[Auth] Failed to fetch session detail: ${(e as Error).message}`);
++			throw new Error('Access denied: unable to verify permissions');
+ 		}
+ 
+-		// 4. 鉴权：解析文件真实路径，防止软链接/.. 逃逸出允许目录
++		// 2. 鉴权：解析文件真实路径，防止软链接/.. 逃逸出允许目录
+ 		let realFilePath: string;
+ 		try {
+ 			realFilePath = await resolveRealPath(filePath);
+@@ -247,7 +190,7 @@ export class RemoteAgentFileSystemProvid
+ 			throw new Error('Access denied: unable to resolve real path');
+ 		}
+ 
+-		// 5. 鉴权：检查真实路径是否在允许的真实目录内
++		// 3. 鉴权：检查真实路径是否在允许的真实目录内
+ 		const normalizedPath = realFilePath.endsWith('/') ? realFilePath.slice(0, -1) : realFilePath;
+ 		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
+ 		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
+@@ -269,8 +212,12 @@ export class RemoteAgentFileSystemProvid
+ 			const resource = this.transformIncoming(uriTransformer, _resource);
+ 			fp = resource.fsPath;
+ 
+-			// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
+-			await this.checkFileAccess(ctx, fp);
++			// 白名单目录（/home/x/.code-server）下的只读操作直接放行
++			const whitelisted = await this.isWhitelistedRead(fp, command, args);
++			if (!whitelisted) {
++				// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
++				await this.checkFileAccess(ctx, fp);
++			}
+ 		}
+ 
+ 		// 原有的 writeFile 记录逻辑（改为调用 API）
+Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
+===================================================================
+--- /dev/null
++++ code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
+@@ -0,0 +1,126 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Microsoft Corporation. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// 会话鉴权共享单例：JWT 校验 + artifactsPath 缓存 + XService 接口。
++// 供 RemoteAgentFileSystemProviderChannel（文件操作鉴权）与
++// ExtensionHostConnection（扩展宿主 env 注入）复用，保证同进程内缓存一致。
++
++import * as https from 'https';
++
++// ─── XService Environment URL Mapping ──────────
++export const ENV_SERVICE_URLS: Record<string, string> = {
++	dev: 'https://x-service.paas.cmbchina.cn',
++	st:  'https://x-service.paasst.cmbchina.cn',
++	oa:  'https://xservice.paasuat.cmbchina.cn',
++	prd: 'https://xservice-prd.paas.cmbchina.cn',
++};
++const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
++
++// 进程级共享缓存：sessionID → { artifactsPath, expireAt }
++const authCache = new Map<string, { artifactsPath: string; expireAt: number }>();
++
++//#region Cache helpers
++
++function getCachedArtifactsPath(sessionID: string): string | null {
++	const entry = authCache.get(sessionID);
++	if (entry && entry.expireAt > Date.now()) {
++		return entry.artifactsPath;
++	}
++	authCache.delete(sessionID);
++	return null;
++}
++
++function setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
++	authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
++}
++
++//#endregion
++
++//#region JWT validation
++
++function isTokenExpired(idToken: string): boolean {
++	try {
++		const parts = idToken.split('.');
++		if (parts.length !== 3) {
++			return true;
++		}
++		const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
++		if (!payload.exp || typeof payload.exp !== 'number') {
++			return true;
++		}
++		return payload.exp * 1000 < Date.now();
++	} catch {
++		return true;
++	}
++}
++
++//#endregion
++
++//#region XService API
++
++function fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
++	return new Promise((resolve, reject) => {
++		const baseUrl = ENV_SERVICE_URLS[runEnv];
++		if (!baseUrl) {
++			return reject(new Error(`Unknown run_env: ${runEnv}`));
++		}
++
++		const url = `${baseUrl}/api/v1/sessions/${sessionID}/detail?healthCheck=true`;
++		const req = https.get(url, {
++			headers: { 'Id-Token': idToken },
++			timeout: 10000,
++		}, (res) => {
++			let data = '';
++			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
++			res.on('end', () => {
++				try {
++					const json = JSON.parse(data);
++					if (json.returnCode === 'SUC0000' && json.data?.artifactsPath) {
++						resolve(json.data.artifactsPath);
++					} else {
++						reject(new Error(`XService returned: ${json.returnCode}`));
++					}
++				} catch (e) {
++					reject(new Error(`Failed to parse XService response: ${(e as Error).message}`));
++				}
++			});
++		});
++
++		req.on('error', (e: Error) => reject(new Error(`XService request failed: ${e.message}`)));
++		req.on('timeout', () => {
++			req.destroy();
++			reject(new Error('XService request timed out'));
++		});
++	});
++}
++
++//#endregion
++
++//#region Public API
++
++/**
++ * 获取会话允许访问的 artifactsPath（进程级共享单例）。
++ * 流程：JWT 过期校验 → 内存缓存 → 调用 XService 接口（接口返回值可信，直接缓存原始值）。
++ * 失败时抛出异常，由调用方决定 fail-close 策略。
++ */
++export async function getArtifactsPath(sessionID: string, idToken: string, runEnv: string): Promise<string> {
++	// 1. 认证：JWT 格式校验 + 过期检查
++	if (isTokenExpired(idToken)) {
++		throw new Error('ID-Token is invalid or expired');
++	}
++
++	// 2. 缓存：优先从缓存获取允许访问的路径
++	const cached = getCachedArtifactsPath(sessionID);
++	if (cached) {
++		return cached;
++	}
++
++	// 3. 鉴权：调用 XService 接口获取 artifactsPath
++	const artifactsPath = await fetchArtifactsPath(runEnv || 'dev', sessionID, idToken);
++	setCachedArtifactsPath(sessionID, artifactsPath);
++	return artifactsPath;
++}
++
++//#endregion
+Index: code-server/lib/vscode/src/vs/workbench/services/extensions/common/remoteExtensionHost.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/extensions/common/remoteExtensionHost.ts
++++ code-server/lib/vscode/src/vs/workbench/services/extensions/common/remoteExtensionHost.ts
+@@ -103,12 +103,22 @@ export class RemoteExtensionHost extends
+ 		};
+ 		return this.remoteAuthorityResolverService.resolveAuthority(this._initDataProvider.remoteAuthority).then((resolverResult) => {
+ 
++			// 会话凭证（与 Management 连接同源，取自 workbench options），
++			// 透传给服务端用于获取本会话的 artifactsPath
++			const csOptions = (this._environmentService as unknown as { options?: { sessionID?: string; idToken?: string; runEnv?: string } }).options;
++
+ 			const startParams: IRemoteExtensionHostStartParams = {
+ 				language: platform.language,
+ 				debugId: this._environmentService.debugExtensionHost.debugId,
+ 				break: this._environmentService.debugExtensionHost.break,
+ 				port: this._environmentService.debugExtensionHost.port,
+-				env: { ...this._environmentService.debugExtensionHost.env, ...resolverResult.options?.extensionHostEnv },
++				env: {
++					...this._environmentService.debugExtensionHost.env,
++					...resolverResult.options?.extensionHostEnv,
++					CS_SESSION_ID: csOptions?.sessionID || null,
++					CS_ID_TOKEN: csOptions?.idToken || null,
++					CS_RUN_ENV: csOptions?.runEnv || null
++				},
+ 			};
+ 
+ 			const extDevLocs = this._environmentService.extensionDevelopmentLocationURI;

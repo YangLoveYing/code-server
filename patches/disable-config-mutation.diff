@@ -1,0 +1,81 @@
+Disable mutation of configuration resources (minimal #6 approach)
+
+This patch locks configuration files (settings/keybindings/tasks/mcp/extensions)
+as read-only with the smallest possible footprint. Two interception points:
+
+1. FileService.writeFile: rejects writes to any file whose name matches
+   settings.json / keybindings.json / tasks.json / mcp.json / extensions.json.
+   All file writes (editor save, programmatic create, extension writes) go
+   through writeFile, so this is the key backstop covering all 5 resource
+   types across all ConfigurationTargets (USER_LOCAL/REMOTE/WORKSPACE/FOLDER).
+
+2. WorkspaceService.updateValue: early-returns when configLocked is true,
+   blocking all programmatic configuration changes including MEMORY target
+   (which bypasses the file system and updates _configuration in-memory
+   directly). Uses a class property (not a const) so TypeScript's
+   allowUnreachableCode:false does not flag the remaining method body.
+
+What this patch does NOT do (intentionally, for minimal footprint):
+  - Does not disable file change listeners (external disk writes via echo
+    will still be detected by watchers and reloaded into memory, but the
+    file itself cannot be overwritten through the editor or API).
+  - Does not disable the Settings UI (users can still open Settings, but
+    saving will fail with FILE_PERMISSION_DENIED).
+  - Does not register resources dynamically (uses filename matching instead
+    of registerReadonlyResource, so no interface changes needed).
+
+Trade-off: filename matching may also block project-level .vscode/settings.json
+or .vscode/tasks.json. This is acceptable because those are also configuration
+files that should be read-only under this policy.
+
+To verify:
+
+1. Apply: quilt push disable-config-mutation.diff
+2. Build: cd lib/vscode && npm install && cd .. && npm run watch
+3. Manual: open Settings (Ctrl+,), edit a value, save -> FILE_PERMISSION_DENIED
+
+Relationship with other patches:
+  - Independent of all other patches. Can be applied in any order.
+
+Index: code-server/lib/vscode/src/vs/platform/files/common/fileService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/platform/files/common/fileService.ts
++++ code-server/lib/vscode/src/vs/platform/files/common/fileService.ts
+@@ -379,6 +379,12 @@ export class FileService extends Disposa
+ 	}
+ 
+ 	async writeFile(resource: URI, bufferOrReadableOrStream: VSBuffer | VSBufferReadable | VSBufferReadableStream, options?: IWriteFileOptions): Promise<IFileStatWithMetadata> {
++		// [disable-config-mutation] Reject writes to configuration files (settings/keybindings/tasks/mcp/extensions).
++		const configFiles = ['settings.json', 'keybindings.json', 'tasks.json', 'mcp.json', 'extensions.json'];
++		if (configFiles.some(f => resource.path.toLowerCase().endsWith('/' + f))) {
++			throw new FileOperationError(localize('err.readonlyConfig', "Unable to write file '{0}' because it is a read-only configuration resource", this.resourceForError(resource)), FileOperationResult.FILE_PERMISSION_DENIED, options);
++		}
++
+ 		const provider = this.throwIfFileSystemIsReadonly(await this.withWriteProvider(resource), resource);
+ 		const { providerExtUri } = this.getExtUri(provider);
+ 
+Index: code-server/lib/vscode/src/vs/workbench/services/configuration/browser/configurationService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/configuration/browser/configurationService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/configuration/browser/configurationService.ts
+@@ -100,6 +100,9 @@ export class WorkspaceService extends Di
+ 	private isWorkspaceTrusted: boolean = true;
+ 
+ 	private _restrictedSettings: RestrictedSettings = { default: [] };
++	// [disable-config-mutation] Runtime flag: when true, all updateValue calls are no-ops.
++	// Uses a class property (not a const) so TypeScript does not flag the remaining method body as unreachable.
++	private readonly configLocked = true;
+ 	get restrictedSettings() { return this._restrictedSettings; }
+ 	private readonly _onDidChangeRestrictedSettings = this._register(new Emitter<RestrictedSettings>());
+ 	public readonly onDidChangeRestrictedSettings = this._onDidChangeRestrictedSettings.event;
+@@ -343,6 +346,9 @@ export class WorkspaceService extends Di
+ 	updateValue(key: string, value: unknown, target: ConfigurationTarget): Promise<void>;
+ 	updateValue(key: string, value: unknown, overrides: IConfigurationOverrides | IConfigurationUpdateOverrides, target: ConfigurationTarget, options?: IConfigurationUpdateOptions): Promise<void>;
+ 	async updateValue(key: string, value: unknown, arg3?: unknown, arg4?: unknown, options?: IConfigurationUpdateOptions): Promise<void> {
++		// [disable-config-mutation] Configuration is locked: all updateValue calls are no-ops.
++		if (this.configLocked) { return Promise.resolve(); }
++
+ 		const overrides: IConfigurationUpdateOverrides | undefined = isConfigurationUpdateOverrides(arg3) ? arg3
+ 			: isConfigurationOverrides(arg3) ? { resource: arg3.resource, overrideIdentifiers: arg3.overrideIdentifier ? [arg3.overrideIdentifier] : undefined } : undefined;
+ 		const target: ConfigurationTarget | undefined = (overrides ? arg4 : arg3) as ConfigurationTarget | undefined;
+ 		const targets: ConfigurationTarget[] = target ? [target] : [];
