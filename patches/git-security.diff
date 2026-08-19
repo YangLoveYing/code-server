@@ -111,18 +111,21 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  import { ILogService } from '../../platform/log/common/log.js';
  import { createURITransformer } from '../../base/common/uriTransformer.js';
  import { RemoteAgentConnectionContext } from '../../platform/remote/common/remoteAgentEnvironment.js';
-@@ -17,8 +17,9 @@ import { AbstractDiskFileSystemProviderC
+@@ -16,9 +16,11 @@ import { IServerEnvironmentService } fro
+ import { AbstractDiskFileSystemProviderChannel, AbstractSessionFileWatcher, ISessionFileWatcher } from '../../platform/files/node/diskFileSystemProviderServer.js';
  import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
  import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
- import * as http from 'http';
+-import * as http from 'http';
 -import { realpath } from 'fs/promises';
++import * as https from 'https';
++import { constants as cryptoConstants } from 'crypto';
 +import { realpath, readFile, access, constants } from 'fs/promises';
  import { dirname, join, resolve } from 'path';
 +import { ENV_SERVICE_URLS, getArtifactsPath } from './xserviceAuth.js';
  
  // 解析真实路径：逐段解析，与内核路径解析语义一致
  // —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
-@@ -55,19 +56,13 @@ async function resolveRealPath(p: string
+@@ -55,19 +57,13 @@ async function resolveRealPath(p: string
  	return tail.length > 0 ? join(current, ...tail) : current;
  }
  
@@ -146,7 +149,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  
  	constructor(
  		logService: ILogService,
-@@ -77,87 +72,100 @@ export class RemoteAgentFileSystemProvid
+@@ -77,87 +73,100 @@ export class RemoteAgentFileSystemProvid
  		super(new DiskFileSystemProvider(logService), logService);
  
  		this._register(this.provider);
@@ -309,16 +312,26 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  	//#region File Change: Record to XService API
  
  	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
-@@ -184,7 +192,7 @@ export class RemoteAgentFileSystemProvid
+@@ -177,14 +186,16 @@ export class RemoteAgentFileSystemProvid
+ 			}]
+ 		});
+ 
+-		const req = http.request(url, {
++		const req = https.request(url, {
+ 			method: 'POST',
+ 			headers: {
+ 				'Id-Token': idToken,
  				'Content-Type': 'application/json',
  				'Content-Length': Buffer.byteLength(postData)
  			},
 -			timeout: 10000
 +			timeout: 10000,
++			rejectUnauthorized: false,
++			secureOptions: cryptoConstants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT,
  		}, (res) => {
  			let data = '';
  			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-@@ -219,26 +227,16 @@ export class RemoteAgentFileSystemProvid
+@@ -219,26 +230,16 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: missing sessionID or ID-Token');
  		}
  
@@ -353,7 +366,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		let realFilePath: string;
  		try {
  			realFilePath = await resolveRealPath(filePath);
-@@ -247,7 +245,7 @@ export class RemoteAgentFileSystemProvid
+@@ -247,7 +248,7 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: unable to resolve real path');
  		}
  
@@ -362,7 +375,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		const normalizedPath = realFilePath.endsWith('/') ? realFilePath.slice(0, -1) : realFilePath;
  		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
  		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
-@@ -269,8 +267,12 @@ export class RemoteAgentFileSystemProvid
+@@ -269,8 +270,12 @@ export class RemoteAgentFileSystemProvid
  			const resource = this.transformIncoming(uriTransformer, _resource);
  			fp = resource.fsPath;
  
@@ -381,7 +394,7 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 ===================================================================
 --- /dev/null
 +++ code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,134 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) Microsoft Corporation. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -391,14 +404,21 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 +// 供 RemoteAgentFileSystemProviderChannel（文件操作鉴权）与
 +// ExtensionHostConnection（扩展宿主 env 注入）复用，保证同进程内缓存一致。
 +
-+import * as http from 'http';
++import * as https from 'https';
++import { constants as cryptoConstants } from 'crypto';
++
++// TLS 请求选项：不校验证书（内网自签名），允许 legacy renegotiation
++const TLS_REQUEST_OPTIONS: https.RequestOptions = {
++	rejectUnauthorized: false,
++	secureOptions: cryptoConstants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT,
++};
 +
 +// ─── XService Environment URL Mapping ──────────
 +export const ENV_SERVICE_URLS: Record<string, string> = {
-+	dev: 'http://x-service.paas.cmbchina.cn',
-+	st:  'http://x-service.paasst.cmbchina.cn',
-+	oa:  'http://xservice.paasuat.cmbchina.cn',
-+	prd: 'http://xservice-prd.paas.cmbchina.cn',
++	dev: 'https://x-service.paas.cmbchina.cn',
++	st:  'https://x-service.paasst.cmbchina.cn',
++	oa:  'https://xservice.paasuat.cmbchina.cn',
++	prd: 'https://xservice-prd.paas.cmbchina.cn',
 +};
 +const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
 +
@@ -452,9 +472,10 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 +		}
 +
 +		const url = `${baseUrl}/api/v1/sessions/${sessionID}/detail?healthCheck=true`;
-+		const req = http.get(url, {
++		const req = https.get(url, {
 +			headers: { 'Id-Token': idToken },
 +			timeout: 10000,
++			...TLS_REQUEST_OPTIONS,
 +		}, (res) => {
 +			let data = '';
 +			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
