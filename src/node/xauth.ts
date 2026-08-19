@@ -1,5 +1,7 @@
 import { field, logger } from "@coder/logger"
 import * as express from "express"
+import * as http from "http"
+import * as https from "https"
 import * as path from "path"
 import { HttpCode, HttpError } from "../common/http"
 
@@ -54,6 +56,9 @@ export const verifyIdToken = (idToken?: string): IdTokenVerification => {
 /**
  * Fetch the session detail from x-service and return the artifacts path.
  *
+ * host must include a protocol (http:// or https://).  TLS certificates are
+ * not verified because x-service may be exposed with self-signed certificates.
+ *
  * Throws TokenRejectedError, SessionNotFoundError, or UpstreamError.
  */
 export const fetchSessionDetail = async (
@@ -62,29 +67,49 @@ export const fetchSessionDetail = async (
   idToken: string,
   timeout: number,
 ): Promise<string> => {
-  let response: Response
+  const url = `${host.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`
+  const request = url.startsWith("https://") ? https.request : http.request
+  // rejectUnauthorized is only read by https; harmless for plain http.
+  const options: https.RequestOptions = {
+    headers: { "id-token": idToken },
+    timeout,
+    rejectUnauthorized: false,
+  }
+
+  let response: http.IncomingMessage
   try {
-    response = await fetch(`${host.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`, {
-      headers: { "id-token": idToken },
-      signal: AbortSignal.timeout(timeout),
+    response = await new Promise((resolve, reject) => {
+      const req = request(url, options, resolve)
+      req.on("timeout", () => req.destroy(new Error(`x-service request timed out after ${timeout}ms`)))
+      req.on("error", reject)
+      req.end()
     })
   } catch (error) {
     throw new UpstreamError(error instanceof Error ? `x-service unreachable: ${error.message}` : "x-service unreachable")
   }
-  if (response.status === HttpCode.Unauthorized) {
-    throw new TokenRejectedError(`x-service rejected the id-token (${response.status})`)
+
+  const status = response.statusCode || 0
+  if (status === HttpCode.Unauthorized) {
+    throw new TokenRejectedError(`x-service rejected the id-token (${status})`)
   }
   // A session is a resource on this endpoint, so 404 means the session does
   // not exist (a definitive result), not a transient upstream failure.
-  if (response.status === HttpCode.NotFound) {
+  if (status === HttpCode.NotFound) {
     throw new SessionNotFoundError("session not found in x-service (404)")
   }
-  if (!response.ok) {
-    throw new UpstreamError(`x-service returned ${response.status}`)
+  if (status < 200 || status >= 300) {
+    throw new UpstreamError(`x-service returned ${status}`)
   }
+
   let body: { returnCode?: string; data?: { artifactsPath?: string } }
   try {
-    body = (await response.json()) as { returnCode?: string; data?: { artifactsPath?: string } }
+    const text = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      response.on("data", (chunk: Buffer) => chunks.push(chunk))
+      response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      response.on("error", reject)
+    })
+    body = JSON.parse(text) as { returnCode?: string; data?: { artifactsPath?: string } }
   } catch {
     throw new UpstreamError("x-service returned an invalid response")
   }
