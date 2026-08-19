@@ -111,15 +111,18 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  import { ILogService } from '../../platform/log/common/log.js';
  import { createURITransformer } from '../../base/common/uriTransformer.js';
  import { RemoteAgentConnectionContext } from '../../platform/remote/common/remoteAgentEnvironment.js';
-@@ -19,6 +19,7 @@ import { IConfigurationService } from '.
+@@ -17,8 +17,9 @@ import { AbstractDiskFileSystemProviderC
+ import { IRecursiveWatcherOptions } from '../../platform/files/common/watcher.js';
+ import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
  import * as http from 'http';
- import { realpath } from 'fs/promises';
+-import { realpath } from 'fs/promises';
++import { realpath, readFile, access, constants } from 'fs/promises';
  import { dirname, join, resolve } from 'path';
 +import { ENV_SERVICE_URLS, getArtifactsPath } from './xserviceAuth.js';
  
  // 解析真实路径：逐段解析，与内核路径解析语义一致
  // —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
-@@ -55,19 +56,9 @@ async function resolveRealPath(p: string
+@@ -55,19 +56,13 @@ async function resolveRealPath(p: string
  	return tail.length > 0 ? join(current, ...tail) : current;
  }
  
@@ -136,15 +139,28 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  
  	private readonly uriTransformerCache = new Map<string, IURITransformer>();
 -	private readonly authCache = new Map<string, { artifactsPath: string; expireAt: number }>();
++
++	// 白名单路径列表：从配置文件加载，支持文件或目录
++	private readWhitelistPaths: string[] = [];
++	private whitelistLoadPromise: Promise<void> | null = null;
  
  	constructor(
  		logService: ILogService,
-@@ -81,83 +72,45 @@ export class RemoteAgentFileSystemProvid
+@@ -77,87 +72,100 @@ export class RemoteAgentFileSystemProvid
+ 		super(new DiskFileSystemProvider(logService), logService);
+ 
+ 		this._register(this.provider);
++
++		// 启动时异步加载白名单配置
++		this.whitelistLoadPromise = this.loadWhitelistConfig();
+ 	}
  
  	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
  
 -	//#region Auth: Cache helpers
--
++	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
++	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
+ 
 -	private getCachedArtifactsPath(sessionID: string): string | null {
 -		const entry = this.authCache.get(sessionID);
 -		if (entry && entry.expireAt > Date.now()) {
@@ -153,23 +169,89 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 -		this.authCache.delete(sessionID);
 -		return null;
 -	}
--
++	/**
++	 * 加载白名单配置文件：${releaseRoot}/config/whiteFiles
++	 * releaseRoot = dirname(dirname(appRoot))，即发布包根目录
++	 * 文件格式：每行一个路径（文件或目录），支持 # 注释，空行忽略
++	 */
++	private async loadWhitelistConfig(): Promise<void> {
++		// appRoot → lib/vscode，回退两级到发布包根目录
++		const releaseRoot = dirname(dirname(this.environmentService.appRoot));
++		const configPath = join(releaseRoot, 'config', 'whiteFiles');
++		try {
++			// 检查文件是否存在
++			await access(configPath, constants.R_OK);
++			const content = await readFile(configPath, 'utf-8');
++			const lines = content.split('\n')
++				.map(line => line.trim())
++				.filter(line => line.length > 0 && !line.startsWith('#'));
+ 
 -	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
 -		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
--	}
-+	// 白名单目录：放行该目录下所有文件的只读操作（写/删/移仍走正常鉴权）
-+	private static readonly READ_WHITELIST_DIR = '/home/x/.code-server';
++			this.readWhitelistPaths = lines;
++			this.logService.info(`[Auth] Whitelist: loaded ${lines.length} entries from ${configPath}`);
++		} catch (e) {
++			if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
++				this.logService.info(`[Auth] Whitelist: config file not found at ${configPath}, whitelist disabled`);
++			} else {
++				this.logService.error(`[Auth] Whitelist: failed to load config from ${configPath}: ${(e as Error).message}`);
++			}
++			this.readWhitelistPaths = [];
++		}
+ 	}
  
 -	//#endregion
-+	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
-+	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
- 
+-
 -	//#region Auth: JWT validation
+-
+-	private isTokenExpired(idToken: string): boolean {
+-		try {
+-			const parts = idToken.split('.');
+-			if (parts.length !== 3) {
 +	/**
-+	 * 只读白名单检查：路径（解析软链接/.. 后的真实路径）位于白名单目录内时放行。
++	 * 检查路径是否命中白名单（精确匹配文件或目录前缀匹配）
++	 */
++	private isWhitelistedPath(realPath: string): boolean {
++		const normalized = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
++		for (const whitelist of this.readWhitelistPaths) {
++			const normalizedWhitelist = whitelist.endsWith('/') ? whitelist.slice(0, -1) : whitelist;
++			if (normalized === normalizedWhitelist || normalized.startsWith(normalizedWhitelist + '/')) {
+ 				return true;
+ 			}
+-			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+-			if (!payload.exp || typeof payload.exp !== 'number') {
+-				return true;
+-			}
+-			return payload.exp * 1000 < Date.now();
+-		} catch {
+-			return true;
+ 		}
++		return false;
+ 	}
+ 
+-	//#endregion
++	/**
++	 * 只读白名单检查：路径（解析软链接/.. 后的真实路径）命中白名单（文件或目录）时放行。
 +	 * 仅适用于只读命令；'open' 需额外确认非写模式；路径解析失败时不放行（fail-close）。
 +	 */
 +	private async isWhitelistedRead(filePath: string, command: string, args: unknown[]): Promise<boolean> {
++		// 等待白名单配置加载完成
++		if (this.whitelistLoadPromise) {
++			await this.whitelistLoadPromise;
++		}
+ 
+-	//#region Auth: XService API
++		// 白名单为空时直接返回
++		if (this.readWhitelistPaths.length === 0) {
++			return false;
++		}
+ 
+-	private fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
+-		return new Promise((resolve, reject) => {
+-			const baseUrl = ENV_SERVICE_URLS[runEnv];
+-			if (!baseUrl) {
+-				return reject(new Error(`Unknown run_env: ${runEnv}`));
+-			}
 +		const isReadOnly = RemoteAgentFileSystemProviderChannel.READONLY_COMMANDS.has(command);
 +		let isRead = isReadOnly;
 +		if (!isRead && command === 'open') {
@@ -181,38 +263,6 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +			return false;
 +		}
  
--	private isTokenExpired(idToken: string): boolean {
-+		let realPath: string;
- 		try {
--			const parts = idToken.split('.');
--			if (parts.length !== 3) {
--				return true;
--			}
--			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
--			if (!payload.exp || typeof payload.exp !== 'number') {
--				return true;
--			}
--			return payload.exp * 1000 < Date.now();
--		} catch {
--			return true;
-+			realPath = await resolveRealPath(filePath);
-+		} catch (e) {
-+			this.logService.error(`[Auth] Whitelist: failed to resolve real path of ${filePath}: ${(e as Error).message}`);
-+			return false;
- 		}
--	}
--
--	//#endregion
- 
--	//#region Auth: XService API
--
--	private fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
--		return new Promise((resolve, reject) => {
--			const baseUrl = ENV_SERVICE_URLS[runEnv];
--			if (!baseUrl) {
--				return reject(new Error(`Unknown run_env: ${runEnv}`));
--			}
--
 -			const url = `${baseUrl}/api/v1/sessions/${sessionID}/detail?healthCheck=true`;
 -			const req = http.get(url, {
 -				headers: { 'Id-Token': idToken },
@@ -233,16 +283,21 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 -					}
 -				});
 -			});
--
++		let realPath: string;
++		try {
++			realPath = await resolveRealPath(filePath);
++		} catch (e) {
++			this.logService.error(`[Auth] Whitelist: failed to resolve real path of ${filePath}: ${(e as Error).message}`);
++			return false;
++		}
+ 
 -			req.on('error', (e: Error) => reject(new Error(`XService request failed: ${e.message}`)));
 -			req.on('timeout', () => {
 -				req.destroy();
 -				reject(new Error('XService request timed out'));
 -			});
 -		});
-+		const whitelist = RemoteAgentFileSystemProviderChannel.READ_WHITELIST_DIR;
-+		const normalized = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
-+		const inWhitelist = normalized === whitelist || normalized.startsWith(whitelist + '/');
++		const inWhitelist = this.isWhitelistedPath(realPath);
 +		if (inWhitelist) {
 +			this.logService.info(`[Auth] Whitelist: allow read '${command}' on ${filePath}`);
 +		}
@@ -254,7 +309,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  	//#region File Change: Record to XService API
  
  	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
-@@ -184,7 +137,7 @@ export class RemoteAgentFileSystemProvid
+@@ -184,7 +192,7 @@ export class RemoteAgentFileSystemProvid
  				'Content-Type': 'application/json',
  				'Content-Length': Buffer.byteLength(postData)
  			},
@@ -263,7 +318,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		}, (res) => {
  			let data = '';
  			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-@@ -219,26 +172,16 @@ export class RemoteAgentFileSystemProvid
+@@ -219,26 +227,16 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: missing sessionID or ID-Token');
  		}
  
@@ -298,7 +353,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		let realFilePath: string;
  		try {
  			realFilePath = await resolveRealPath(filePath);
-@@ -247,7 +190,7 @@ export class RemoteAgentFileSystemProvid
+@@ -247,7 +245,7 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: unable to resolve real path');
  		}
  
@@ -307,13 +362,13 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		const normalizedPath = realFilePath.endsWith('/') ? realFilePath.slice(0, -1) : realFilePath;
  		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
  		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
-@@ -269,8 +212,12 @@ export class RemoteAgentFileSystemProvid
+@@ -269,8 +267,12 @@ export class RemoteAgentFileSystemProvid
  			const resource = this.transformIncoming(uriTransformer, _resource);
  			fp = resource.fsPath;
  
 -			// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
 -			await this.checkFileAccess(ctx, fp);
-+			// 白名单目录（/home/x/.code-server）下的只读操作直接放行
++			// 白名单路径（从 config/whiteFiles 配置加载）下的只读操作直接放行
 +			const whitelisted = await this.isWhitelistedRead(fp, command, args);
 +			if (!whitelisted) {
 +				// 统一鉴权：所有路径类文件操作（读/写/删/移/浏览）均需通过
