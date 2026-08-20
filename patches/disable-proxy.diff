@@ -22,9 +22,30 @@ To verify:
    - Expected: 404 Not Found (NOT 403)
 4. Re-enable: quilt pop disable-proxy.diff
 
-This does NOT touch lib/vscode. The proxy-uri.diff patch is independent and
-will still inject VSCODE_PROXY_URI into terminals, but following those URLs
-will now return 404.
+In addition, this patch now ALSO disables the VS Code port-forwarding /
+auto-forward feature in the vendored lib/vscode (it previously only touched
+code-server's own src/). With the lib/vscode changes:
+
+- remoteExplorer.ts `enableForwardedPortsFeatures()` sets featuresEnabled /
+  viewEnabled to false, so the Ports (Forwarded Ports) view is never
+  registered and `portsFeaturesEnabled` stays at its default `Disabled`.
+- Because `portsFeaturesEnabled` is never `AdditionalFeatures`, both the
+  process port scanner (extHostTunnelService `$registerCandidateFinder`) and
+  the terminal-output scanner (OutputAutomaticPortForwarding) become no-ops,
+  so no "new port available" popup appears and nothing is forwarded.
+- tunnelView.ts: the "Forward a Port" command registration and its
+  CommandPalette menu entry are commented out, hiding the feature.
+
+The proxy-uri.diff patch is still independent and will still inject
+VSCODE_PROXY_URI into terminals, but following those URLs now returns 404.
+
+To verify the port-forwarding disable (no full build needed on low-RAM
+machines):
+- `quilt refresh` applies cleanly (proves the hunks still match the tree).
+- After building/running: starting a new port (e.g. `python3 -m http.server
+  8081`) in the integrated terminal must NOT trigger a "port available"
+  notification; the bottom Panel must NOT show a Ports view; the command
+  palette must NOT list "Forward a Port".
 
 Compile-fix notes (tsconfig has noUnusedLocals):
 - index.ts: also comment out `import type { WebsocketRequest }` (no longer used)
@@ -306,3 +327,54 @@ Index: code-server/src/node/routes/pathProxy.ts
 +//     target: getProxyTarget(req, opts),
 +//   })
  }
+Index: code-server/lib/vscode/src/vs/workbench/contrib/remote/browser/remoteExplorer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/remote/browser/remoteExplorer.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/remote/browser/remoteExplorer.ts
+@@ -83,8 +83,8 @@ export class ForwardedPortsView extends
+ 	private async enableForwardedPortsFeatures() {
+ 		this.contextKeyListener.clear();
+ 
+-		const featuresEnabled: boolean = true;
+-		const viewEnabled: boolean = true;
++		const featuresEnabled: boolean = false;
++		const viewEnabled: boolean = false;
+ 
+ 		if (featuresEnabled || viewEnabled) {
+ 			// Also enable the view if it isn't already.
+Index: code-server/lib/vscode/src/vs/workbench/contrib/remote/browser/tunnelView.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/remote/browser/tunnelView.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/remote/browser/tunnelView.ts
+@@ -1598,8 +1598,8 @@ KeybindingsRegistry.registerCommandAndKe
+ 	},
+ 	handler: LabelTunnelAction.handler()
+ });
+-CommandsRegistry.registerCommand(ForwardPortAction.INLINE_ID, ForwardPortAction.inlineHandler());
+-CommandsRegistry.registerCommand(ForwardPortAction.COMMANDPALETTE_ID, ForwardPortAction.commandPaletteHandler());
++// CommandsRegistry.registerCommand(ForwardPortAction.INLINE_ID, ForwardPortAction.inlineHandler());
++// CommandsRegistry.registerCommand(ForwardPortAction.COMMANDPALETTE_ID, ForwardPortAction.commandPaletteHandler());
+ KeybindingsRegistry.registerCommandAndKeybindingRule({
+ 	id: ClosePortAction.INLINE_ID,
+ 	weight: KeybindingWeight.WorkbenchContrib + tunnelViewCommandsWeightBonus,
+@@ -1635,13 +1635,13 @@ MenuRegistry.appendMenuItem(MenuId.Comma
+ 	},
+ 	when: forwardedPortsViewEnabled
+ }));
+-MenuRegistry.appendMenuItem(MenuId.CommandPalette, ({
+-	command: {
+-		id: ForwardPortAction.COMMANDPALETTE_ID,
+-		title: ForwardPortAction.LABEL
+-	},
+-	when: forwardedPortsViewEnabled
+-}));
++// MenuRegistry.appendMenuItem(MenuId.CommandPalette, ({
++// 	command: {
++// 		id: ForwardPortAction.COMMANDPALETTE_ID,
++// 		title: ForwardPortAction.LABEL
++// 	},
++// 	when: forwardedPortsViewEnabled
++// }));
+ MenuRegistry.appendMenuItem(MenuId.CommandPalette, ({
+ 	command: {
+ 		id: CopyAddressAction.COMMANDPALETTE_ID,
