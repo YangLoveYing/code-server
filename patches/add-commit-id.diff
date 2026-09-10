@@ -1,0 +1,601 @@
+Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/media/scm.css
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/scm/browser/media/scm.css
++++ code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/media/scm.css
+@@ -390,13 +390,94 @@
+ 	box-sizing: border-box;
+ 	width: 100%;
+ 	display: flex;
+-	align-items: flex-start;
++	flex-direction: column;
+ 	box-sizing: border-box;
+ 	border: 1px solid var(--vscode-input-border, transparent);
+ 	background-color: var(--vscode-input-background);
+ 	border-radius: 4px;
+ }
+ 
++/* Project number searchable dropdown row */
++.scm-view .scm-editor .scm-editor-project-selector {
++	padding: 4px 6px;
++	padding-top: 6px;
++	border-bottom: 1px solid var(--vscode-input-border, transparent);
++	display: flex;
++	flex-direction: column;
++	min-height: 32px;
++	position: relative;
++}
++
++.scm-view .scm-editor .scm-editor-project-selector.hidden {
++	display: none;
++}
++
++/* Combobox input (display + search in one box) */
++.scm-view .scm-editor .scm-project-combobox {
++	width: 100%;
++	box-sizing: border-box;
++	font-size: 13px;
++	height: 26px;
++	padding: 0 6px;
++	border: 1px solid var(--vscode-input-border, transparent);
++	border-radius: 3px;
++	background: var(--vscode-input-background);
++	color: var(--vscode-input-foreground);
++	outline: none;
++}
++
++.scm-view .scm-editor .scm-project-combobox[readonly] {
++	cursor: pointer;
++	caret-color: transparent;
++	background: var(--vscode-dropdown-background);
++}
++
++/* List container (normal flow, scrollable) */
++.scm-view .scm-editor .scm-project-list {
++	width: 100%;
++	max-height: 180px;
++	overflow-y: auto;
++	background: var(--vscode-dropdown-background);
++	color: var(--vscode-dropdown-foreground);
++	border: 1px solid var(--vscode-dropdown-border, transparent);
++	border-radius: 4px;
++	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
++	margin-top: 4px;
++}
++
++/* List items */
++.scm-view .scm-editor .scm-project-list-item {
++	padding: 4px 8px;
++	font-size: 12px;
++	cursor: pointer;
++	white-space: nowrap;
++	overflow: hidden;
++	text-overflow: ellipsis;
++}
++
++.scm-view .scm-editor .scm-project-list-item:hover {
++	background: var(--vscode-list-hoverBackground);
++}
++
++/* Loading state for project list */
++.scm-view .scm-editor .scm-project-list-item.loading {
++	color: var(--vscode-descriptionForeground);
++	cursor: default;
++	font-style: italic;
++}
++
++/* Middle container: holds editor + toolbar side by side */
++.scm-view .scm-editor .scm-editor-middle-container {
++	display: flex;
++	align-items: flex-start;
++	width: 100%;
++}
++
++/* Ensure commit message editor has enough height */
++.scm-view .scm-editor .scm-editor-middle-container .scm-editor-container {
++	min-height: 28px;
++}
++
+ .scm-view .button-container {
+ 	display: flex;
+ 	height: 100%;
+Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scm.service.contribution.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/scm/browser/scm.service.contribution.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scm.service.contribution.ts
+@@ -7,6 +7,8 @@ import { InstantiationType, registerSing
+ import { ISCMService, ISCMViewService } from '../common/scm.js';
+ import { SCMService } from '../common/scmService.js';
+ import { SCMViewService } from './scmViewService.js';
++import { IProjectNumberService, ProjectNumberService } from './scmProjectNumbers.js';
+ 
+ registerSingleton(ISCMService, SCMService, InstantiationType.Delayed);
+ registerSingleton(ISCMViewService, SCMViewService, InstantiationType.Delayed);
++registerSingleton(IProjectNumberService, ProjectNumberService, InstantiationType.Delayed);
+Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
+@@ -6,7 +6,7 @@
+ import './media/scm.css';
+ import { Event, Emitter } from '../../../../base/common/event.js';
+ import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+-import { append, $, Dimension, trackFocus } from '../../../../base/browser/dom.js';
++import { append, $, Dimension, trackFocus, addDisposableListener, EventType } from '../../../../base/browser/dom.js';
+ import { InputValidationType, ISCMInput, IInputValidation, ISCMViewService, SCMInputChangeReason, ISCMInputValueProviderContext } from '../common/scm.js';
+ import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+ import { IContextViewService, IContextMenuService, IOpenContextView } from '../../../../platform/contextview/browser/contextView.js';
+@@ -71,6 +71,7 @@ import { AccessibilityCommandId } from '
+ import { ChatContextKeys } from '../../chat/common/actions/chatContextKeys.js';
+ import product from '../../../../platform/product/common/product.js';
+ import { CHAT_SETUP_SUPPORT_ANONYMOUS_ACTION_ID } from '../../chat/browser/actions/chatActions.js';
++import { IProjectNumberService, IProjectNumberItem } from './scmProjectNumbers.js';
+ 
+ export const SCMInputContextKeys = {
+ 	SCMInputHasValidationMessage: new RawContextKey<boolean>('scmInputHasValidationMessage', false),
+@@ -369,6 +370,15 @@ export class SCMInputWidget {
+ 	private toolbar: SCMInputWidgetToolbar;
+ 	private readonly disposables = new DisposableStore();
+ 
++	// Project number dropdown (searchable)
++	private projectSelectorContainer: HTMLElement;
++	private projectItems: IProjectNumberItem[] = [];
++	private currentProjectNumber: string | undefined;
++	private isUpdatingFromDropdown = false;
++	private _itemJustSelected = false;
++	private projectListItems: { element: HTMLElement; item: IProjectNumberItem }[] = [];
++	private readonly _onDropdownVisibilityChanged = new Emitter<void>();
++
+ 	private model: { readonly input: ISCMInput; readonly textModel: ITextModel } | undefined;
+ 	private repositoryIdContextKey: IContextKey<string | undefined>;
+ 	private validationMessageContextKey: IContextKey<boolean>;
+@@ -459,6 +469,9 @@ export class SCMInputWidget {
+ 		this.repositoryDisposables.add(textModel.onDidChangeContent(() => {
+ 			input.setValue(textModel.getValue(), true);
+ 			triggerValidation();
++
++			// Reverse sync: update dropdown when text changes externally
++			this._syncDropdownFromText(textModel.getValue());
+ 		}));
+ 
+ 		// Aria label & placeholder text
+@@ -531,6 +544,9 @@ export class SCMInputWidget {
+ 		// Toolbar
+ 		this.toolbar.setInput(input);
+ 
++		// Project number dropdown initialization
++		this._initProjectSelector(textModel);
++
+ 		// Save model
+ 		this.model = { input, textModel };
+ 	}
+@@ -576,10 +592,13 @@ export class SCMInputWidget {
+ 		@IOpenerService private readonly openerService: IOpenerService,
+ 		@IAccessibilityService private readonly accessibilityService: IAccessibilityService,
+ 		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
++		@IProjectNumberService private readonly projectNumberService: IProjectNumberService,
+ 	) {
+ 		this.element = append(container, $('.scm-editor'));
+-		this.editorContainer = append(this.element, $('.scm-editor-container'));
+-		this.toolbarContainer = append(this.element, $('.scm-editor-toolbar'));
++		this.projectSelectorContainer = append(this.element, $('.scm-editor-project-selector'));
++		const middleContainer = append(this.element, $('.scm-editor-middle-container'));
++		this.editorContainer = append(middleContainer, $('.scm-editor-container'));
++		this.toolbarContainer = append(middleContainer, $('.scm-editor-toolbar'));
+ 
+ 		this.contextKeyService = this.disposables.add(contextKeyService.createScoped(this.element));
+ 		this.repositoryIdContextKey = this.contextKeyService.createKey('scmRepository', undefined);
+@@ -659,7 +678,10 @@ export class SCMInputWidget {
+ 
+ 		Event.filter(this.configurationService.onDidChangeConfiguration, e => e.affectsConfiguration('scm.showInputActionButton'))(() => this.layout(), this, this.disposables);
+ 
+-		this.onDidChangeContentHeight = Event.signal(Event.filter(this.inputEditor.onDidContentSizeChange, e => e.contentHeightChanged, this.disposables));
++		this.onDidChangeContentHeight = Event.any(
++			Event.signal(Event.filter(this.inputEditor.onDidContentSizeChange, e => e.contentHeightChanged, this.disposables)),
++			this._onDropdownVisibilityChanged.event
++		);
+ 
+ 		// Toolbar
+ 		this.toolbar = instantiationService2.createInstance(SCMInputWidgetToolbar, this.toolbarContainer, {
+@@ -691,12 +713,30 @@ export class SCMInputWidget {
+ 		const inputMaxLines = typeof inputMaxLinesConfig === 'number' ? clamp(inputMaxLinesConfig, 1, 50) : 10;
+ 		const editorMaxHeight = inputMaxLines * lineHeight + top + bottom;
+ 
+-		return clamp(this.inputEditor.getContentHeight(), editorMinHeight, editorMaxHeight);
++		const editorHeight = clamp(this.inputEditor.getContentHeight(), editorMinHeight, editorMaxHeight);
++
++		// Ensure editor height accounts for CSS min-height on .scm-editor-container
++		const EDITOR_CONTAINER_MIN_HEIGHT = 28;
++		const effectiveEditorHeight = Math.max(editorHeight, EDITOR_CONTAINER_MIN_HEIGHT);
++
++		// Add project selector dropdown height if visible
++		const selectorHeight = this.projectSelectorContainer && !this.projectSelectorContainer.classList.contains('hidden')
++			? this.projectSelectorContainer.offsetHeight
++			: 0;
++
++		return effectiveEditorHeight + selectorHeight;
+ 	}
+ 
+ 	layout(): void {
+-		const editorHeight = this.getContentHeight();
++		const totalHeight = this.getContentHeight();
+ 		const toolbarWidth = this.getToolbarWidth();
++
++		// Subtract selector height so the editor only gets its own height
++		const selectorHeight = this.projectSelectorContainer && !this.projectSelectorContainer.classList.contains('hidden')
++			? this.projectSelectorContainer.offsetHeight
++			: 0;
++		const editorHeight = totalHeight - selectorHeight;
++
+ 		const dimension = new Dimension(this.element.clientWidth - toolbarWidth, editorHeight);
+ 
+ 		if (dimension.width < 0) {
+@@ -810,6 +850,236 @@ export class SCMInputWidget {
+ 		});
+ 	}
+ 
++	// ─── Project number dropdown methods ──────────
++
++	private _initProjectSelector(textModel: ITextModel): void {
++		// Clean up previous state
++		this.projectItems = [];
++		this.projectListItems = [];
++		this.currentProjectNumber = undefined;
++
++		// Clear container to prevent duplicate elements
++		this.projectSelectorContainer.innerHTML = '';
++		this.projectSelectorContainer.classList.remove('hidden');
++
++		// ── Combobox input (display + search in one box) ──
++		const comboInput = document.createElement('input');
++		comboInput.type = 'text';
++		comboInput.className = 'scm-project-combobox';
++		comboInput.placeholder = localize('scmInput.searchProject', "Search project number or name...");
++		comboInput.value = '';
++		this.projectSelectorContainer.appendChild(comboInput);
++
++		const list = document.createElement('div');
++		list.className = 'scm-project-list';
++		list.style.display = 'none';
++		this.projectSelectorContainer.appendChild(list);
++
++		// "(No Project Number)" option (always present)
++		const noneItem = document.createElement('div');
++		noneItem.className = 'scm-project-list-item';
++		noneItem.textContent = localize('scmInput.noProjectNumber', "(No Project Number)");
++		noneItem.dataset.number = '';
++		list.appendChild(noneItem);
++
++		// ── Event handlers ──
++
++		// Container mousedown: toggle dropdown + stop propagation
++		this.repositoryDisposables.add(addDisposableListener(this.projectSelectorContainer, EventType.MOUSE_DOWN, (e) => {
++			e.stopPropagation();
++			if (this._itemJustSelected) { return; } // skip if list item was just clicked
++			// Toggle dropdown
++			if (list.style.display === 'block') {
++				// Close: hide list, restore display
++				list.style.display = 'none';
++				comboInput.readOnly = true;
++				if (this.currentProjectNumber) {
++					const found = this.projectItems.find(i => i.number === this.currentProjectNumber);
++					comboInput.value = found
++						? (found.description ? `${found.label}(${found.description})` : found.label)
++						: this.currentProjectNumber;
++				}
++				setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++			} else {
++				// Open: load fresh data then show
++				comboInput.readOnly = false;
++				comboInput.value = '';
++				// Clear old project items and show loading state
++				this._clearProjectListItems();
++				const loadingEl = document.createElement('div');
++				loadingEl.className = 'scm-project-list-item loading';
++				loadingEl.textContent = 'Loading...';
++				list.appendChild(loadingEl);
++				list.style.display = 'block';
++				setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++
++				this.projectNumberService.loadItems().then(items => {
++					// Remove loading indicator
++					loadingEl.remove();
++					// Populate project items
++					this.projectItems = items;
++					this.projectListItems = [];
++					for (const item of items) {
++						const el = document.createElement('div');
++						el.className = 'scm-project-list-item';
++						el.textContent = item.description ? `${item.label}(${item.description})` : item.label;
++						el.dataset.number = item.number;
++						list.appendChild(el);
++						this.projectListItems.push({ element: el, item });
++					}
++					this._filterProjectList('');
++					comboInput.focus();
++					setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++				});
++			}
++		}));
++
++		// Real-time filtering as user types
++		this.repositoryDisposables.add(addDisposableListener(comboInput, EventType.INPUT, () => {
++			list.style.display = 'block';
++			this._filterProjectList(comboInput.value);
++			setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++		}));
++
++		// Mousedown on list item → select (use mousedown to prevent blur-before-click)
++		this.repositoryDisposables.add(addDisposableListener(list, EventType.MOUSE_DOWN, (e) => {
++			e.preventDefault(); // prevent input blur
++			const target = (e.target as HTMLElement).closest('.scm-project-list-item') as HTMLElement | null;
++			if (!target) { return; }
++			const selectedNumber = target.dataset.number ?? '';
++			list.style.display = 'none';
++			this._itemJustSelected = true;
++			setTimeout(() => { this._itemJustSelected = false; }, 200);
++			setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++			this._onProjectNumberChanged(selectedNumber, textModel);
++			// Set combobox display text and lock as read-only
++			const found = this.projectItems.find(i => i.number === selectedNumber);
++			comboInput.value = found
++				? (found.description ? `${found.label}(${found.description})` : found.label)
++				: selectedNumber;
++			comboInput.readOnly = !!selectedNumber;
++		}));
++
++		// On blur: close dropdown and restore display text
++		this.repositoryDisposables.add(addDisposableListener(comboInput, EventType.BLUR, () => {
++			if (list.style.display !== 'none') {
++				list.style.display = 'none';
++				setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++			}
++			if (this.currentProjectNumber) {
++				const found = this.projectItems.find(i => i.number === this.currentProjectNumber);
++				comboInput.value = found
++					? (found.description ? `${found.label}(${found.description})` : found.label)
++					: this.currentProjectNumber;
++			} else {
++				comboInput.value = '';
++			}
++			comboInput.readOnly = !!this.currentProjectNumber;
++		}));
++
++		// Parse initial text for existing project number
++		const initialText = textModel.getValue();
++		const parsed = this._parseProjectNumber(initialText);
++		if (parsed) {
++			this.currentProjectNumber = parsed;
++			comboInput.value = parsed;
++			comboInput.readOnly = true;
++		}
++	}
++
++	private _filterProjectList(query: string): void {
++		const lowerQuery = query.toLowerCase();
++		// Filter "(No Project Number)" item
++		const noneEl = this.projectListItems.length > 0
++			? this.projectSelectorContainer.querySelector('.scm-project-list-item[data-number=""]') as HTMLElement | null
++			: null;
++		if (noneEl) {
++			noneEl.style.display = !query ? 'block' : 'none';
++		}
++		// Filter project items
++		for (const { element, item } of this.projectListItems) {
++			const matchesNumber = item.number.toLowerCase().includes(lowerQuery);
++			const matchesDesc = item.description?.toLowerCase().includes(lowerQuery) ?? false;
++			element.style.display = (matchesNumber || matchesDesc) ? 'block' : 'none';
++		}
++	}
++
++	private _parseProjectNumber(text: string): string | undefined {
++		const match = text.match(/^([A-Za-z0-9-]+)\s+#comment\b/);
++		if (match && this.projectItems.some(item => item.number === match[1])) {
++			return match[1];
++		}
++		return undefined;
++	}
++
++	private _stripProjectPrefix(text: string, oldNumber: string): string {
++		const escaped = oldNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++		return text.replace(new RegExp(`^${escaped}\\s+#comment\\s*`), '');
++	}
++
++	private _clearProjectListItems(): void {
++		// Remove all dynamically created list items (keep the "(No Project Number)" option)
++		const items = this.projectSelectorContainer.querySelectorAll('.scm-project-list-item:not([data-number=""])');
++		items.forEach(el => el.remove());
++		this.projectListItems = [];
++	}
++
++	private _onProjectNumberChanged(newNumber: string, textModel: ITextModel): void {
++		if (this.isUpdatingFromDropdown) {
++			return;
++		}
++
++		const currentText = textModel.getValue();
++
++		// 1. Strip old prefix
++		const description = this.currentProjectNumber
++			? this._stripProjectPrefix(currentText, this.currentProjectNumber)
++			: currentText;
++
++		// 2. Compose new text with #comment tag
++		const newText = newNumber
++			? `${newNumber} #comment ${description}`
++			: description;
++
++		// 3. Write to model via pushEditOperations (supports undo/redo)
++		this.isUpdatingFromDropdown = true;
++		textModel.pushStackElement();
++		textModel.pushEditOperations(
++			null,
++			[EditOperation.replaceMove(textModel.getFullModelRange(), newText)],
++			() => []
++		);
++
++		// 4. Cursor to end
++		const endPos = textModel.getFullModelRange().getEndPosition();
++		this.inputEditor.setPosition(endPos);
++		this.inputEditor.revealPositionInCenterIfOutsideViewport(endPos);
++		this.inputEditor.focus();
++
++		this.currentProjectNumber = newNumber || undefined;
++		this.isUpdatingFromDropdown = false;
++	}
++
++	private _syncDropdownFromText(text: string): void {
++		if (this.isUpdatingFromDropdown || this.projectListItems.length === 0) {
++			return;
++		}
++		const parsed = this._parseProjectNumber(text);
++		if (parsed !== this.currentProjectNumber) {
++			this.currentProjectNumber = parsed;
++			const comboInput = this.projectSelectorContainer.querySelector('.scm-project-combobox') as HTMLInputElement | null;
++			if (!comboInput) { return; }
++			if (parsed) {
++				const found = this.projectItems.find(i => i.number === parsed);
++				comboInput.value = found
++					? (found.description ? `${found.label}(${found.description})` : found.label)
++					: parsed;
++			} else {
++				comboInput.value = '';
++			}
++		}
++	}
++
+ 	private getToolbarWidth(): number {
+ 		const showInputActionButton = this.configurationService.getValue<boolean>('scm.showInputActionButton');
+ 		if (!this.toolbar || !showInputActionButton || this.toolbar?.isEmpty() === true) {
+Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmProjectNumbers.ts
+===================================================================
+--- /dev/null
++++ code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmProjectNumbers.ts
+@@ -0,0 +1,81 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Microsoft Corporation. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
++import { Event, Emitter } from '../../../../base/common/event.js';
++import { IProductService } from '../../../../platform/product/common/productService.js';
++
++// ─── 项目编号数据模型 ──────────
++
++export interface IProjectNumberItem {
++	readonly number: string;      // 如 "Z992232-2463"（完整 taskKey）
++	readonly label: string;       // 同 number
++	readonly description?: string; // 如 "html 报告创建skill"（taskName）
++}
++
++// ─── 服务接口 ──────────
++
++export const IProjectNumberService = createDecorator<IProjectNumberService>('projectNumberService');
++
++export interface IProjectNumberService {
++	readonly _serviceBrand: undefined;
++	readonly onDidLoad: Event<void>;
++	readonly isAvailable: boolean;
++	getItems(): IProjectNumberItem[];                     // 返回缓存数据（同步）
++	loadItems(): Promise<IProjectNumberItem[]>;           // 从 API 加载
++}
++
++// ─── API 实现 ──────────
++
++export class ProjectNumberService implements IProjectNumberService {
++	declare readonly _serviceBrand: undefined;
++
++	private readonly _onDidLoad = new Emitter<void>();
++	readonly onDidLoad = this._onDidLoad.event;
++
++	private _items: IProjectNumberItem[] = [];
++
++	constructor(
++		@IProductService private readonly _productService: IProductService,
++	) {}
++
++	get isAvailable(): boolean {
++		return this._items.length > 0;
++	}
++
++	getItems(): IProjectNumberItem[] {
++		return this._items;
++	}
++
++	async loadItems(): Promise<IProjectNumberItem[]> {
++		try {
++			const endpoint = this._productService.kanbanEndpoint || '/api/kanban/tasks';
++			const response = await fetch(endpoint, {
++				credentials: 'same-origin',
++			});
++			if (!response.ok) {
++				return [];
++			}
++			const json = await response.json() as {
++				returnCode?: string;
++				data?: { tasks?: Array<{ taskKey: string; taskName: string }> };
++			};
++			if (json.returnCode !== 'SUC0000' || !json.data?.tasks) {
++				this._items = [];
++				return [];
++			}
++			this._items = json.data.tasks.map(task => ({
++				number: task.taskKey,
++				label: task.taskKey,
++				description: task.taskName,
++			}));
++			this._onDidLoad.fire();
++			return this._items;
++		} catch {
++			this._items = [];
++			return [];
++		}
++	}
++}
+Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmViewPane.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/contrib/scm/browser/scmViewPane.ts
++++ code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmViewPane.ts
+@@ -321,7 +321,7 @@ class InputRenderer implements ICompress
+ 			this.contentHeights.set(input, contentHeight);
+ 
+ 			if (templateData.inputWidgetHeight !== contentHeight) {
+-				this.updateHeight(input, contentHeight + 10);
++				this.updateHeight(input, contentHeight + 12);
+ 				templateData.inputWidgetHeight = contentHeight;
+ 				templateData.inputWidget.layout();
+ 			}
+@@ -355,7 +355,8 @@ class InputRenderer implements ICompress
+ 	}
+ 
+ 	getHeight(input: ISCMInput): number {
+-		return (this.contentHeights.get(input) ?? InputRenderer.DEFAULT_HEIGHT) + 10;
++		// +12 = 10px padding + 2px for .scm-editor border (top+bottom 1px each)
++		return (this.contentHeights.get(input) ?? InputRenderer.DEFAULT_HEIGHT) + 12;
+ 	}
+ 
+ 	getRenderedInputWidget(input: ISCMInput): SCMInputWidget | undefined {
+Index: code-server/lib/vscode/src/vs/base/common/product.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/base/common/product.ts
++++ code-server/lib/vscode/src/vs/base/common/product.ts
+@@ -94,6 +94,7 @@ export interface IProductConfiguration {
+ 		readonly scope: string;
+ 	}
+ 	readonly telemetryEndpoint?: string
++	readonly kanbanEndpoint?: string
+ 
+ 	readonly version: string;
+ 	readonly date?: string;
+Index: code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/webClientServer.ts
++++ code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+@@ -373,6 +373,7 @@ export class WebClientServer {
+ 			nameLong: appName,
+ 			rootEndpoint: rootBase,
+ 			updateEndpoint: !this._environmentService.args['disable-update-check'] ? rootBase + '/update/check' : undefined,
++			kanbanEndpoint: rootBase + '/api/kanban/tasks',
+ 			logoutEndpoint: this._environmentService.args['auth'] && this._environmentService.args['auth'] !== "none" ? rootBase + '/logout' : undefined,
+ 			proxyEndpointTemplate: process.env.VSCODE_PROXY_URI ?? rootBase + '/proxy/{{port}}/',
+ 			serviceWorker: {

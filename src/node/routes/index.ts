@@ -19,6 +19,7 @@ import { getMediaMime, paths } from "../util"
 // import * as domainProxy from "./domainProxy"
 import { errorHandler, wsErrorHandler } from "./errors"
 import * as health from "./health"
+import * as kanban from "./kanban"
 import * as login from "./login"
 import * as logout from "./logout"
 // import * as pathProxy from "./pathProxy"
@@ -153,6 +154,9 @@ export const register = async (
 
   app.router.use("/healthz", health.router)
   app.wsRouter.use("/healthz", health.wsRouter.router)
+
+  // XService kanban tasks proxy (reads id_token from cookie)
+  app.router.use("/api/kanban", kanban.router)
 
   if (args.auth === AuthType.Password) {
     app.router.use("/login", login.router)
