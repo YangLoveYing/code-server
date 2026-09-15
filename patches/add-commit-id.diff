@@ -49,9 +49,10 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/media/scm.css
 +	background: var(--vscode-dropdown-background);
 +}
 +
-+/* List container (normal flow, scrollable) */
-+.scm-view .scm-editor .scm-project-list {
-+	width: 100%;
++/* List container (fixed positioned, appended to document.body) */
++.scm-project-list {
++	position: fixed;
++	z-index: 10000;
 +	max-height: 180px;
 +	overflow-y: auto;
 +	background: var(--vscode-dropdown-background);
@@ -59,11 +60,10 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/media/scm.css
 +	border: 1px solid var(--vscode-dropdown-border, transparent);
 +	border-radius: 4px;
 +	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-+	margin-top: 4px;
 +}
 +
 +/* List items */
-+.scm-view .scm-editor .scm-project-list-item {
++.scm-project-list-item {
 +	padding: 4px 8px;
 +	font-size: 12px;
 +	cursor: pointer;
@@ -72,12 +72,12 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/media/scm.css
 +	text-overflow: ellipsis;
 +}
 +
-+.scm-view .scm-editor .scm-project-list-item:hover {
++.scm-project-list-item:hover {
 +	background: var(--vscode-list-hoverBackground);
 +}
 +
 +/* Loading state for project list */
-+.scm-view .scm-editor .scm-project-list-item.loading {
++.scm-project-list-item.loading {
 +	color: var(--vscode-descriptionForeground);
 +	cursor: default;
 +	font-style: italic;
@@ -132,7 +132,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  
  export const SCMInputContextKeys = {
  	SCMInputHasValidationMessage: new RawContextKey<boolean>('scmInputHasValidationMessage', false),
-@@ -369,6 +370,15 @@ export class SCMInputWidget {
+@@ -369,6 +370,16 @@ export class SCMInputWidget {
  	private toolbar: SCMInputWidgetToolbar;
  	private readonly disposables = new DisposableStore();
  
@@ -144,11 +144,12 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +	private _itemJustSelected = false;
 +	private projectListItems: { element: HTMLElement; item: IProjectNumberItem }[] = [];
 +	private readonly _onDropdownVisibilityChanged = new Emitter<void>();
++	private projectList!: HTMLElement;
 +
  	private model: { readonly input: ISCMInput; readonly textModel: ITextModel } | undefined;
  	private repositoryIdContextKey: IContextKey<string | undefined>;
  	private validationMessageContextKey: IContextKey<boolean>;
-@@ -459,6 +469,9 @@ export class SCMInputWidget {
+@@ -459,6 +470,9 @@ export class SCMInputWidget {
  		this.repositoryDisposables.add(textModel.onDidChangeContent(() => {
  			input.setValue(textModel.getValue(), true);
  			triggerValidation();
@@ -158,7 +159,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  		}));
  
  		// Aria label & placeholder text
-@@ -531,6 +544,9 @@ export class SCMInputWidget {
+@@ -531,6 +545,9 @@ export class SCMInputWidget {
  		// Toolbar
  		this.toolbar.setInput(input);
  
@@ -168,7 +169,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  		// Save model
  		this.model = { input, textModel };
  	}
-@@ -576,10 +592,13 @@ export class SCMInputWidget {
+@@ -576,10 +593,13 @@ export class SCMInputWidget {
  		@IOpenerService private readonly openerService: IOpenerService,
  		@IAccessibilityService private readonly accessibilityService: IAccessibilityService,
  		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
@@ -184,7 +185,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  
  		this.contextKeyService = this.disposables.add(contextKeyService.createScoped(this.element));
  		this.repositoryIdContextKey = this.contextKeyService.createKey('scmRepository', undefined);
-@@ -659,7 +678,10 @@ export class SCMInputWidget {
+@@ -659,7 +679,10 @@ export class SCMInputWidget {
  
  		Event.filter(this.configurationService.onDidChangeConfiguration, e => e.affectsConfiguration('scm.showInputActionButton'))(() => this.layout(), this, this.disposables);
  
@@ -196,7 +197,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  
  		// Toolbar
  		this.toolbar = instantiationService2.createInstance(SCMInputWidgetToolbar, this.toolbarContainer, {
-@@ -691,12 +713,30 @@ export class SCMInputWidget {
+@@ -691,12 +714,30 @@ export class SCMInputWidget {
  		const inputMaxLines = typeof inputMaxLinesConfig === 'number' ? clamp(inputMaxLinesConfig, 1, 50) : 10;
  		const editorMaxHeight = inputMaxLines * lineHeight + top + bottom;
  
@@ -229,7 +230,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  		const dimension = new Dimension(this.element.clientWidth - toolbarWidth, editorHeight);
  
  		if (dimension.width < 0) {
-@@ -810,6 +850,236 @@ export class SCMInputWidget {
+@@ -810,6 +851,264 @@ export class SCMInputWidget {
  		});
  	}
  
@@ -240,6 +241,9 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		this.projectItems = [];
 +		this.projectListItems = [];
 +		this.currentProjectNumber = undefined;
++
++		// Remove old list from body
++		this.projectList?.remove();
 +
 +		// Clear container to prevent duplicate elements
 +		this.projectSelectorContainer.innerHTML = '';
@@ -256,7 +260,13 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		const list = document.createElement('div');
 +		list.className = 'scm-project-list';
 +		list.style.display = 'none';
-+		this.projectSelectorContainer.appendChild(list);
++		this.projectList = list;
++		document.querySelector('.monaco-workbench')?.appendChild(list);
++
++		// Prevent VSCode's global wheel handler from intercepting list scroll
++		this.repositoryDisposables.add(addDisposableListener(list, EventType.WHEEL, (e) => {
++			e.stopPropagation();
++		}, true)); // capture phase
 +
 +		// "(No Project Number)" option (always present)
 +		const noneItem = document.createElement('div');
@@ -282,7 +292,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +						? (found.description ? `${found.label}(${found.description})` : found.label)
 +						: this.currentProjectNumber;
 +				}
-+				setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++				setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +			} else {
 +				// Open: load fresh data then show
 +				comboInput.readOnly = false;
@@ -294,7 +304,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +				loadingEl.textContent = 'Loading...';
 +				list.appendChild(loadingEl);
 +				list.style.display = 'block';
-+				setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++				setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +
 +				this.projectNumberService.loadItems().then(items => {
 +					// Remove loading indicator
@@ -312,7 +322,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +					}
 +					this._filterProjectList('');
 +					comboInput.focus();
-+					setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++					setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +				});
 +			}
 +		}));
@@ -321,7 +331,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		this.repositoryDisposables.add(addDisposableListener(comboInput, EventType.INPUT, () => {
 +			list.style.display = 'block';
 +			this._filterProjectList(comboInput.value);
-+			setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++			setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +		}));
 +
 +		// Mousedown on list item → select (use mousedown to prevent blur-before-click)
@@ -333,7 +343,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +			list.style.display = 'none';
 +			this._itemJustSelected = true;
 +			setTimeout(() => { this._itemJustSelected = false; }, 200);
-+			setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++			setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +			this._onProjectNumberChanged(selectedNumber, textModel);
 +			// Set combobox display text and lock as read-only
 +			const found = this.projectItems.find(i => i.number === selectedNumber);
@@ -347,7 +357,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		this.repositoryDisposables.add(addDisposableListener(comboInput, EventType.BLUR, () => {
 +			if (list.style.display !== 'none') {
 +				list.style.display = 'none';
-+				setTimeout(() => { this.layout(); this._onDropdownVisibilityChanged.fire(); }, 0);
++				setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +			}
 +			if (this.currentProjectNumber) {
 +				const found = this.projectItems.find(i => i.number === this.currentProjectNumber);
@@ -367,14 +377,31 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +			this.currentProjectNumber = parsed;
 +			comboInput.value = parsed;
 +			comboInput.readOnly = true;
++		} else if (/^[A-Za-z0-9-]+\s+#comment\b/.test(initialText)) {
++			// Strip orphaned prefix from previous repo (projectItems not loaded yet)
++			const cleaned = initialText.replace(/^[A-Za-z0-9-]+\s+#comment\s*/, '');
++			textModel.setValue(cleaned);
 +		}
++	}
++
++	private _positionProjectList(): void {
++		if (!this.projectList || this.projectList.style.display === 'none') {
++			return;
++		}
++		const combobox = this.projectSelectorContainer.querySelector('.scm-project-combobox') as HTMLElement;
++		if (!combobox) { return; }
++		const comboRect = combobox.getBoundingClientRect();
++		this.projectList.style.position = 'fixed';
++		this.projectList.style.left = `${comboRect.left}px`;
++		this.projectList.style.top = `${comboRect.bottom + 2}px`;
++		this.projectList.style.width = `${comboRect.width}px`;
 +	}
 +
 +	private _filterProjectList(query: string): void {
 +		const lowerQuery = query.toLowerCase();
 +		// Filter "(No Project Number)" item
-+		const noneEl = this.projectListItems.length > 0
-+			? this.projectSelectorContainer.querySelector('.scm-project-list-item[data-number=""]') as HTMLElement | null
++		const noneEl = this.projectList
++			? this.projectList.querySelector('.scm-project-list-item[data-number=""]') as HTMLElement | null
 +			: null;
 +		if (noneEl) {
 +			noneEl.style.display = !query ? 'block' : 'none';
@@ -402,7 +429,9 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +
 +	private _clearProjectListItems(): void {
 +		// Remove all dynamically created list items (keep the "(No Project Number)" option)
-+		const items = this.projectSelectorContainer.querySelectorAll('.scm-project-list-item:not([data-number=""])');
++		const items = this.projectList
++			? this.projectList.querySelectorAll('.scm-project-list-item:not([data-number=""])')
++			: document.querySelectorAll('.scm-project-list-item:not([data-number=""])');
 +		items.forEach(el => el.remove());
 +		this.projectListItems = [];
 +	}
