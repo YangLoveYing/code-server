@@ -985,6 +985,7 @@ export interface CodeArgs extends UserProvidedCodeArgs {
   "without-browser-env-var"?: boolean
   compatibility?: string
   log?: string[]
+  "x-service-hosts"?: string
 }
 
 /**
@@ -999,5 +1000,9 @@ export const toCodeArgs = async (args: DefaultedArgs): Promise<CodeArgs> => {
     version: !!args.version,
     port: args.port?.toString(),
     log: args.log ? [args.log] : undefined,
+    // code-server 已将 x-service-hosts 解析为对象，VSCode 侧 initXServiceHosts 期望 JSON 字符串
+    "x-service-hosts": Object.keys(args["x-service-hosts"]).length > 0
+      ? JSON.stringify(args["x-service-hosts"])
+      : undefined,
   }
 }
