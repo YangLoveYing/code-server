@@ -40,3 +40,4 @@ git-security.diff
 disable-proxy.diff
 disable-config-mutation.diff
 disable-debug-console-ports.diff
+disable-notifications.diff

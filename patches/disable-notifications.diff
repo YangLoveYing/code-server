@@ -1,0 +1,195 @@
+Purpose:
+Suppress workbench popup/toast/bell notifications and record them to a
+server-side log (POST /notify-log, see src/node/routes/notifyLog.ts) instead.
+
+The feature is controlled at startup by the CS_DISABLE_NOTIFICATIONS
+environment variable and is ENABLED BY DEFAULT. Set it to "false" or "0" to
+restore the upstream notification behavior:
+
+  CS_DISABLE_NOTIFICATIONS=false
+
+The equivalent --disable-notifications option is accepted in three places:
+- environment variable: CS_DISABLE_NOTIFICATIONS=false (or 0)
+- config file (e.g. ~/.config/code-server/config.yaml): disable-notifications: false
+- command line: --disable-notifications=false (a bare flag enables)
+An explicit CLI/config value takes priority over the environment variable.
+Support for "--boolean-flag=false" was added to the CLI parser in
+src/node/cli.ts so a YAML `false` value is honored (outside this patch).
+
+How it works:
+- src/node/cli.ts reads the env var (default: enabled) and forwards
+  "disable-notifications" to the VS Code server arguments.
+- serverEnvironmentService.ts registers the new boolean server argument.
+- webClientServer.ts exposes it to the workbench via
+  productConfiguration.disableNotifications.
+- product.ts adds disableNotifications to IProductConfiguration.
+- notificationService.ts injects IProductService: while the flag is on
+  (default), notify() logs the notification to /notify-log and returns a
+  NoOpNotification; when off, the upstream notify() implementation runs
+  unchanged. info()/warn()/error() route through notify() so the switch
+  covers all severities.
+
+Verify:
+- Default, or CS_DISABLE_NOTIFICATIONS=true: trigger a notification (for
+  example an extension error); no toast/bell/badge surfaces and a JSON line is
+  appended to <data-dir>/notification.log.
+- CS_DISABLE_NOTIFICATIONS=false: notifications render exactly as upstream and
+  no /notify-log requests are issued.
+
+Related:
+- The /notify-log route is implemented in src/node/routes/notifyLog.ts and
+  registered in src/node/routes/index.ts (outside this patch).
+- This patch is independent: hunks only anchor on upstream context lines.
+
+Index: code-server/lib/vscode/src/vs/base/common/product.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/base/common/product.ts
++++ code-server/lib/vscode/src/vs/base/common/product.ts
+@@ -98,2 +98,6 @@ export interface IProductConfiguration {
+ 	readonly version: string;
++	// [code-server] Whether workbench notification popups are suppressed.
++	// Mirrors the server-side CS_DISABLE_NOTIFICATIONS environment variable
++	// (enabled by default); see notificationService.ts.
++	readonly disableNotifications?: boolean;
+ 	readonly date?: string;
+Index: code-server/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
++++ code-server/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
+@@ -113,6 +113,9 @@ export const serverOptions: OptionDescri
+ 
+ 	'compatibility': { type: 'string' },
+ 
++	// [code-server] Suppress workbench notification popups (CS_DISABLE_NOTIFICATIONS, defaults to enabled).
++	'disable-notifications': { type: 'boolean' },
++
+ 	_: OPTIONS['_']
+ };
+ 
+@@ -129,6 +132,9 @@ export interface ServerParsedArgs {
+ 
+ 	/* ----- server setup ----- */
+ 
++	// [code-server] Suppress workbench notification popups (CS_DISABLE_NOTIFICATIONS, defaults to enabled).
++	'disable-notifications'?: boolean;
++
+ 	host?: string;
+ 	/**
+ 	 * A port or a port range
+Index: code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/webClientServer.ts
++++ code-server/lib/vscode/src/vs/server/node/webClientServer.ts
+@@ -384,2 +384,6 @@ export class WebClientServer {
+ 			embedderIdentifier: 'server-distro',
++			// [code-server] Forward the notification suppression switch to the
++			// workbench. Enabled by default; only an explicit false opt-out via
++			// the CS_DISABLE_NOTIFICATIONS environment variable restores popups.
++			disableNotifications: this._environmentService.args['disable-notifications'] !== false,
+ 			extensionsGallery: this._productService.extensionsGallery,
+Index: code-server/lib/vscode/src/vs/workbench/services/notification/common/notificationService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/workbench/services/notification/common/notificationService.ts
++++ code-server/lib/vscode/src/vs/workbench/services/notification/common/notificationService.ts
+@@ -11,6 +11,8 @@ import { Emitter, Event } from '../../..
+ import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+ import { IAction, Action } from '../../../../base/common/actions.js';
+ import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
++// [code-server] Read the CS_DISABLE_NOTIFICATIONS switch from the product configuration.
++import { IProductService } from '../../../../platform/product/common/productService.js';
+ 
+ export class NotificationService extends Disposable implements INotificationService {
+ 
+@@ -19,7 +21,9 @@ export class NotificationService extends
+ 	readonly model = this._register(new NotificationsModel());
+ 
+ 	constructor(
+-		@IStorageService private readonly storageService: IStorageService
++		@IStorageService private readonly storageService: IStorageService,
++		// [code-server] Provides the disableNotifications flag (CS_DISABLE_NOTIFICATIONS, enabled by default).
++		@IProductService private readonly productService: IProductService,
+ 	) {
+ 		super();
+ 
+@@ -162,7 +166,7 @@ export class NotificationService extends
+ 			return;
+ 		}
+ 
+-		this.model.addNotification({ severity: Severity.Info, message });
++		this.notify({ severity: Severity.Info, message });
+ 	}
+ 
+ 	warn(message: NotificationMessage | NotificationMessage[]): void {
+@@ -174,7 +178,7 @@ export class NotificationService extends
+ 			return;
+ 		}
+ 
+-		this.model.addNotification({ severity: Severity.Warning, message });
++		this.notify({ severity: Severity.Warning, message });
+ 	}
+ 
+ 	error(message: NotificationMessage | NotificationMessage[]): void {
+@@ -186,10 +190,22 @@ export class NotificationService extends
+ 			return;
+ 		}
+ 
+-		this.model.addNotification({ severity: Severity.Error, message });
++		this.notify({ severity: Severity.Error, message });
+ 	}
+ 
+ 	notify(notification: INotification): INotificationHandle {
++		// [code-server] Popup/toast/bell notification suppression, controlled by
++		// the server-side CS_DISABLE_NOTIFICATIONS environment variable (enabled
++		// by default; only an explicit "false"/"0" value restores notifications).
++		// The flag is forwarded through the product configuration. When enabled,
++		// the notification is recorded to a server-side log (see notify-log
++		// route) and no UI is surfaced; otherwise the upstream code below runs.
++		if (this.productService.disableNotifications !== false) {
++			this.logNotification(notification);
++
++			return new NoOpNotification();
++		}
++
+ 		const toDispose = new DisposableStore();
+ 
+ 		// Handle neverShowAgain option accordingly
+@@ -239,6 +255,39 @@ export class NotificationService extends
+ 		return handle;
+ 	}
+ 
++	private logNotification(notification: INotification): void {
++		try {
++			const message = typeof notification.message === "string"
++				? notification.message
++				: (notification.message && (notification.message as { value?: string }).value) || "";
++
++			const severityLabel = notification.severity === 2 ? "Error"
++				: notification.severity === 1 ? "Warning"
++				: "Info";
++
++			const payload = JSON.stringify({
++				severity: severityLabel,
++				message: message.slice(0, 4096),
++				source: notification.source,
++				// [code-server] INotification has no `sourceId` property in this
++				// version; when source is an INotificationSource, its id is
++				// already included in the serialized `source` above.
++				// sourceId: notification.sourceId,
++				priority: notification.priority,
++			});
++
++			const baseURI = new URL(".", document.baseURI);
++			fetch(new URL("notify-log", baseURI).toString(), {
++				method: "POST",
++				headers: { "Content-Type": "application/json" },
++				body: payload,
++				keepalive: true,
++			}).catch(() => { /* ignore */ });
++		} catch {
++			/* ignore */
++		}
++	}
++
+ 	private toStorageScope(options: INeverShowAgainOptions): StorageScope {
+ 		switch (options.scope) {
+ 			case NeverShowAgainScope.APPLICATION:
