@@ -39,5 +39,6 @@ disable-testing-and-run.diff
 git-security.diff
 disable-proxy.diff
 disable-config-mutation.diff
+add-commit-id.diff
 disable-debug-console-ports.diff
 disable-notifications.diff

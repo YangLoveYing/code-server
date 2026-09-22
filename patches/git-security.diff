@@ -52,11 +52,21 @@ Index: code-server/lib/vscode/src/vs/server/node/extensionHostConnection.ts
  import { IExtensionHostStatusService } from './extensionHostStatusService.js';
  import { getNLSConfiguration } from './remoteLanguagePacks.js';
  import { IServerEnvironmentService } from './serverEnvironmentService.js';
-+import { getArtifactsPath } from './xserviceAuth.js';
++import { getArtifactsPath, initXServiceHosts } from './xserviceAuth.js';
  import { IPCExtHostConnection, SocketExtHostConnection, writeExtHostConnection } from '../../workbench/services/extensions/common/extensionHostEnv.js';
  import { IExtHostReadyMessage, IExtHostReduceGraceTimeMessage, IExtHostSocketMessage } from '../../workbench/services/extensions/common/extensionHostProtocol.js';
  
-@@ -262,6 +263,23 @@ export class ExtensionHostConnection ext
+@@ -138,6 +139,9 @@ export class ExtensionHostConnection ext
+ 			socket.setRecordInflateBytes(false);
+ 		}
+ 
++		// 从启动参数初始化 XService 域名映射（仅首次生效）
++		initXServiceHosts(this._environmentService.args['x-service-hosts']);
++
+ 		this._log(`New connection established.`);
+ 	}
+ 
+@@ -262,6 +266,23 @@ export class ExtensionHostConnection ext
  			const env = await buildUserEnvironment(startParams.env, true, startParams.language, this._environmentService, this._logService, this._configurationService);
  			removeDangerousEnvVariables(env);
  
@@ -121,7 +131,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +import { constants as cryptoConstants } from 'crypto';
 +import { realpath, readFile, access, constants } from 'fs/promises';
  import { dirname, join, resolve } from 'path';
-+import { ENV_SERVICE_URLS, getArtifactsPath } from './xserviceAuth.js';
++import { ENV_SERVICE_URLS, getArtifactsPath, initXServiceHosts } from './xserviceAuth.js';
  
  // 解析真实路径：逐段解析，与内核路径解析语义一致
  // —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
@@ -149,20 +159,17 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  
  	constructor(
  		logService: ILogService,
-@@ -77,87 +73,100 @@ export class RemoteAgentFileSystemProvid
+@@ -77,87 +73,103 @@ export class RemoteAgentFileSystemProvid
  		super(new DiskFileSystemProvider(logService), logService);
  
  		this._register(this.provider);
-+
-+		// 启动时异步加载白名单配置
-+		this.whitelistLoadPromise = this.loadWhitelistConfig();
- 	}
- 
- 	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
+-	}
+-
+-	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
  
 -	//#region Auth: Cache helpers
-+	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
-+	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
++		// 从启动参数初始化 XService 域名映射（仅首次生效）
++		initXServiceHosts(this.environmentService.args['x-service-hosts']);
  
 -	private getCachedArtifactsPath(sessionID: string): string | null {
 -		const entry = this.authCache.get(sessionID);
@@ -172,6 +179,21 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 -		this.authCache.delete(sessionID);
 -		return null;
 -	}
+-
+-	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
+-		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
++		// 启动时异步加载白名单配置
++		this.whitelistLoadPromise = this.loadWhitelistConfig();
+ 	}
+ 
+-	//#endregion
++	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
+ 
+-	//#region Auth: JWT validation
++	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
++	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
+ 
+-	private isTokenExpired(idToken: string): boolean {
 +	/**
 +	 * 加载白名单配置文件：${releaseRoot}/config/whiteFiles
 +	 * releaseRoot = dirname(dirname(appRoot))，即发布包根目录
@@ -181,16 +203,17 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +		// appRoot → lib/vscode，回退两级到发布包根目录
 +		const releaseRoot = dirname(dirname(this.environmentService.appRoot));
 +		const configPath = join(releaseRoot, 'config', 'whiteFiles');
-+		try {
+ 		try {
+-			const parts = idToken.split('.');
+-			if (parts.length !== 3) {
+-				return true;
 +			// 检查文件是否存在
 +			await access(configPath, constants.R_OK);
 +			const content = await readFile(configPath, 'utf-8');
 +			const lines = content.split('\n')
 +				.map(line => line.trim())
 +				.filter(line => line.length > 0 && !line.startsWith('#'));
- 
--	private setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
--		this.authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
++
 +			this.readWhitelistPaths = lines;
 +			this.logService.info(`[Auth] Whitelist: loaded ${lines.length} entries from ${configPath}`);
 +		} catch (e) {
@@ -198,19 +221,13 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +				this.logService.info(`[Auth] Whitelist: config file not found at ${configPath}, whitelist disabled`);
 +			} else {
 +				this.logService.error(`[Auth] Whitelist: failed to load config from ${configPath}: ${(e as Error).message}`);
-+			}
+ 			}
+-			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+-			if (!payload.exp || typeof payload.exp !== 'number') {
 +			this.readWhitelistPaths = [];
 +		}
- 	}
- 
--	//#endregion
--
--	//#region Auth: JWT validation
--
--	private isTokenExpired(idToken: string): boolean {
--		try {
--			const parts = idToken.split('.');
--			if (parts.length !== 3) {
++	}
++
 +	/**
 +	 * 检查路径是否命中白名单（精确匹配文件或目录前缀匹配）
 +	 */
@@ -221,10 +238,6 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
 +			if (normalized === normalizedWhitelist || normalized.startsWith(normalizedWhitelist + '/')) {
  				return true;
  			}
--			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
--			if (!payload.exp || typeof payload.exp !== 'number') {
--				return true;
--			}
 -			return payload.exp * 1000 < Date.now();
 -		} catch {
 -			return true;
@@ -312,7 +325,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  	//#region File Change: Record to XService API
  
  	private recordFileChange(runEnv: string, sessionID: string, idToken: string, filePath: string): void {
-@@ -177,14 +186,16 @@ export class RemoteAgentFileSystemProvid
+@@ -177,14 +189,16 @@ export class RemoteAgentFileSystemProvid
  			}]
  		});
  
@@ -331,7 +344,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		}, (res) => {
  			let data = '';
  			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-@@ -219,26 +230,16 @@ export class RemoteAgentFileSystemProvid
+@@ -219,26 +233,16 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: missing sessionID or ID-Token');
  		}
  
@@ -366,7 +379,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		let realFilePath: string;
  		try {
  			realFilePath = await resolveRealPath(filePath);
-@@ -247,7 +248,7 @@ export class RemoteAgentFileSystemProvid
+@@ -247,7 +251,7 @@ export class RemoteAgentFileSystemProvid
  			throw new Error('Access denied: unable to resolve real path');
  		}
  
@@ -375,7 +388,7 @@ Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.
  		const normalizedPath = realFilePath.endsWith('/') ? realFilePath.slice(0, -1) : realFilePath;
  		const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
  		if (normalizedPath !== normalizedAllowed && !normalizedPath.startsWith(normalizedAllowed + '/')) {
-@@ -269,8 +270,12 @@ export class RemoteAgentFileSystemProvid
+@@ -269,8 +273,12 @@ export class RemoteAgentFileSystemProvid
  			const resource = this.transformIncoming(uriTransformer, _resource);
  			fp = resource.fsPath;
  
@@ -394,7 +407,7 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 ===================================================================
 --- /dev/null
 +++ code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,162 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) Microsoft Corporation. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -414,12 +427,40 @@ Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
 +};
 +
 +// ─── XService Environment URL Mapping ──────────
-+export const ENV_SERVICE_URLS: Record<string, string> = {
-+	dev: 'https://x-service.paas.cmbchina.cn',
-+	st:  'https://x-service.paasst.cmbchina.cn',
-+	oa:  'https://xservice.paasuat.cmbchina.cn',
-+	prd: 'https://xservice-prd.paas.cmbchina.cn',
-+};
++// 运行时映射：完全由 --x-service-hosts 启动参数决定，未提供时为空
++let ENV_SERVICE_URLS: Record<string, string> = {};
++let hostsInitialized = false;
++
++/**
++ * 从 --x-service-hosts 启动参数初始化 XService 域名映射。
++ * 参数格式：JSON 字符串，如 '{"dev":"https://x-service.paas.cmbchina.cn",...}'
++ * 仅首次调用生效，后续调用忽略。
++ */
++export function initXServiceHosts(rawJson: string | undefined): void {
++	if (hostsInitialized) {
++		return;
++	}
++	hostsInitialized = true;
++
++	if (!rawJson) {
++		console.error('[XServiceAuth] --x-service-hosts not provided, XService domain mapping is empty');
++		return;
++	}
++
++	try {
++		const parsed = JSON.parse(rawJson);
++		if (typeof parsed === 'object' && parsed !== null) {
++			ENV_SERVICE_URLS = parsed;
++			console.log(`[XServiceAuth] Loaded ${Object.keys(parsed).length} host entries from --x-service-hosts`);
++		} else {
++			console.error('[XServiceAuth] --x-service-hosts value is not an object, domain mapping is empty');
++		}
++	} catch (e) {
++		console.error(`[XServiceAuth] Failed to parse --x-service-hosts: ${(e as Error).message}`);
++	}
++}
++
++export { ENV_SERVICE_URLS };
 +const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
 +
 +// 进程级共享缓存：sessionID → { artifactsPath, expireAt }
@@ -557,3 +598,23 @@ Index: code-server/lib/vscode/src/vs/workbench/services/extensions/common/remote
  			};
  
  			const extDevLocs = this._environmentService.extensionDevelopmentLocationURI;
+Index: code-server/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
++++ code-server/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
+@@ -25,6 +25,7 @@ export const serverOptions: OptionDescri
+ 	'locale': { type: 'string' },
+ 	'link-protection-trusted-domains': { type: 'string[]' },
+ 	'app-name': { type: 'string' },
++	'x-service-hosts': { type: 'string' },
+ 
+ 	/* ----- server setup ----- */
+ 
+@@ -126,6 +127,7 @@ export interface ServerParsedArgs {
+ 	'locale'?: string
+ 	'link-protection-trusted-domains'?: string[],
+ 	'app-name'?: string,
++	'x-service-hosts'?: string,
+ 
+ 	/* ----- server setup ----- */
+ 
