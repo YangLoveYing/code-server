@@ -43,3 +43,5 @@ add-commit-id.diff
 disable-debug-console-ports.diff
 disable-notifications.diff
 catch-skill-modified.diff
+disable-extension-install.diff
+disable-mcp.diff

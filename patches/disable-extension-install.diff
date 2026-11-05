@@ -1,0 +1,84 @@
+Index: code-server/lib/vscode/src/vs/server/node/restrictedExtensionManagementChannel.ts
+===================================================================
+--- /dev/null
++++ code-server/lib/vscode/src/vs/server/node/restrictedExtensionManagementChannel.ts
+@@ -0,0 +1,53 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Microsoft Corporation. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import { CancellationToken } from '../../base/common/cancellation.js';
++import { Event } from '../../base/common/event.js';
++import { IServerChannel } from '../../base/parts/ipc/common/ipc.js';
++import { RemoteAgentConnectionContext } from '../../platform/remote/common/remoteAgentEnvironment.js';
++
++/**
++ * IPC commands that only query state or modify metadata of extensions already
++ * installed on the server. Everything else (uploading, installing, downloading,
++ * copying or removing extensions) is rejected so web users cannot introduce
++ * executable code into the extension host.
++ *
++ * Preinstalled extensions and administrator-driven CLI installs do not travel
++ * through this channel, so they keep working.
++ *
++ * The list is an allowlist on purpose: any command added upstream later is
++ * blocked by default instead of being exposed accidentally.
++ */
++const ALLOWED_COMMANDS = new Set<string>([
++	'getManifest',
++	'getTargetPlatform',
++	'getInstalled',
++	'toggleApplicationScope',
++	'updateMetadata',
++	'getExtensionsControlManifest',
++	'getConfigBasedTips',
++	'getImportantExecutableBasedTips',
++	'getOtherExecutableBasedTips',
++]);
++
++/**
++ * Wraps the ExtensionManagementChannel and denies every command that is not in
++ * {@link ALLOWED_COMMANDS}. Event subscriptions are forwarded unchanged.
++ */
++export class RestrictedExtensionManagementChannel implements IServerChannel<RemoteAgentConnectionContext> {
++
++	constructor(private readonly actual: IServerChannel<RemoteAgentConnectionContext | string>) { }
++
++	listen<T>(context: RemoteAgentConnectionContext, event: string, arg?: any): Event<T> {
++		return this.actual.listen<T>(context, event, arg);
++	}
++
++	async call<T>(context: RemoteAgentConnectionContext, command: string, arg?: any, cancellationToken?: CancellationToken): Promise<T> {
++		if (!ALLOWED_COMMANDS.has(command)) {
++			throw new Error(`Extension management command '${command}' is disabled by administrator policy`);
++		}
++		return this.actual.call<T>(context, command, arg, cancellationToken);
++	}
++}
+Index: code-server/lib/vscode/src/vs/server/node/serverServices.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/serverServices.ts
++++ code-server/lib/vscode/src/vs/server/node/serverServices.ts
+@@ -25,6 +25,7 @@ import { IAllowedExtensionsService, IExt
+ import { ExtensionSignatureVerificationService, IExtensionSignatureVerificationService } from '../../platform/extensionManagement/node/extensionSignatureVerificationService.js';
+ import { ExtensionManagementCLI } from '../../platform/extensionManagement/common/extensionManagementCLI.js';
+ import { ExtensionManagementChannel } from '../../platform/extensionManagement/common/extensionManagementIpc.js';
++import { RestrictedExtensionManagementChannel } from './restrictedExtensionManagementChannel.js';
+ import { ExtensionManagementService, INativeServerExtensionManagementService } from '../../platform/extensionManagement/node/extensionManagementService.js';
+ import { IFileService } from '../../platform/files/common/files.js';
+ import { FileService } from '../../platform/files/common/fileService.js';
+@@ -353,7 +354,12 @@ export async function setupServerService
+ 
+ 		socketServer.registerChannel('request', new RequestChannel(accessor.get(IRequestService)));
+ 
+-		const channel = new ExtensionManagementChannel(extensionManagementService, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority));
++		// [policy] Wrap the extension channel so install/upload/remove commands are
++		// rejected. Preinstalled extensions and administrator CLI installs do not
++		// go through this channel and are unaffected.
++		const channel = new RestrictedExtensionManagementChannel(
++			new ExtensionManagementChannel(extensionManagementService, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority)),
++		);
+ 		socketServer.registerChannel('extensions', channel);
+ 
+ 		socketServer.registerChannel('mcpManagement', new McpManagementChannel(mcpManagementService, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority)));
