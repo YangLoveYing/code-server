@@ -1,0 +1,471 @@
+Index: code-server/lib/vscode/src/vs/server/node/fileAccessControl.ts
+===================================================================
+--- /dev/null
++++ code-server/lib/vscode/src/vs/server/node/fileAccessControl.ts
+@@ -0,0 +1,141 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Microsoft Corporation. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// 文件访问控制共享模块：路径解析 + 白名单。
++// 供 RemoteAgentFileSystemProviderChannel（IPC 通道）与
++// RemoteExtensionHostAgentServer（HTTP /vscode-remote-resource 端点）复用。
++
++import { realpath, readFile, access, constants } from 'fs/promises';
++import { dirname, join, resolve } from 'path';
++
++//#region resolveRealPath
++
++/**
++ * 解析真实路径：逐段解析，与内核路径解析语义一致
++ * —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
++ * —— 遇到第一个不存在的段后，剩余尾部原样拼接（覆盖新建文件场景）。
++ * 不能先做字符串层面的 .. 规范化：若 .. 前面是软链接，字符串抵消的结果
++ * 与内核实际落点不一致，会留下绕过空间。
++ * 仅 ENOENT 触发尾部回退，其余错误直接抛出（fail-close）
++ */
++export async function resolveRealPath(p: string): Promise<string> {
++	const abs = p.startsWith('/') ? p : resolve(p);
++	const segments = abs.split('/').filter(s => s !== '' && s !== '.');
++	let current = '/';
++	const tail: string[] = [];
++	for (const seg of segments) {
++		if (tail.length > 0) {
++			// 已进入不存在的尾部区域，剩余段（含 ..）原样保留
++			tail.push(seg);
++			continue;
++		}
++		if (seg === '..') {
++			// 内核语义：.. 相对于软链接解析后的真实路径向上一级
++			current = dirname(current);
++			continue;
++		}
++		const candidate = join(current, seg);
++		try {
++			current = await realpath(candidate);
++		} catch (e) {
++			if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
++				throw e;
++			}
++			tail.push(seg);
++		}
++	}
++	return tail.length > 0 ? join(current, ...tail) : current;
++}
++
++//#endregion
++
++//#region FileAccessWhitelist
++
++/**
++ * 文件访问白名单单例：从 config/whiteFiles 加载，供 IPC 与 HTTP 端点共享。
++ * 进程内只加载一次，后续调用 ensureLoaded() 直接返回。
++ */
++export class FileAccessWhitelist {
++
++	private paths: string[] = [];
++	private loadPromise: Promise<void> | null = null;
++	private loaded = false;
++
++	/**
++	 * 启动时加载白名单配置文件。
++	 * @param releaseRoot 发布包根目录（appRoot 回退两级）
++	 */
++	load(releaseRoot: string): void {
++		if (this.loadPromise) {
++			return; // 已在加载中或已加载完成
++		}
++		this.loadPromise = this._doLoad(releaseRoot);
++	}
++
++	/**
++	 * 等待加载完成。
++	 */
++	async waitUntilLoaded(): Promise<void> {
++		if (this.loaded) {
++			return;
++		}
++		if (this.loadPromise) {
++			await this.loadPromise;
++		}
++	}
++
++	/**
++	 * 检查路径是否命中白名单（精确匹配文件或目录前缀匹配）。
++	 * @param realPath 已解析软链接后的真实路径
++	 */
++	isWhitelisted(realPath: string): boolean {
++		if (this.paths.length === 0) {
++			return false;
++		}
++		const normalized = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
++		for (const whitelist of this.paths) {
++			const normalizedWhitelist = whitelist.endsWith('/') ? whitelist.slice(0, -1) : whitelist;
++			if (normalized === normalizedWhitelist || normalized.startsWith(normalizedWhitelist + '/')) {
++				return true;
++			}
++		}
++		return false;
++	}
++
++	/**
++	 * 白名单是否为空（未配置或加载失败）。
++	 */
++	isEmpty(): boolean {
++		return this.paths.length === 0;
++	}
++
++	private async _doLoad(releaseRoot: string): Promise<void> {
++		const configPath = join(releaseRoot, 'config', 'whiteFiles');
++		try {
++			await access(configPath, constants.R_OK);
++			const content = await readFile(configPath, 'utf-8');
++			this.paths = content.split('\n')
++				.map(line => line.trim())
++				.filter(line => line.length > 0 && !line.startsWith('#'));
++			this.loaded = true;
++			console.log(`[Auth] Whitelist: loaded ${this.paths.length} entries from ${configPath}`);
++		} catch (e) {
++			if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
++				console.log(`[Auth] Whitelist: config file not found at ${configPath}, whitelist disabled`);
++			} else {
++				console.error(`[Auth] Whitelist: failed to load config from ${configPath}: ${(e as Error).message}`);
++			}
++			this.paths = [];
++			this.loaded = true;
++		}
++	}
++}
++
++/**
++ * 进程级白名单单例，供 IPC 通道与 HTTP 端点共享。
++ */
++export const fileWhitelist = new FileAccessWhitelist();
++
++//#endregion
+Index: code-server/lib/vscode/src/vs/server/node/remoteExtensionHostAgentServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteExtensionHostAgentServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteExtensionHostAgentServer.ts
+@@ -40,6 +40,9 @@ import { IServerEnvironmentService, Serv
+ import { IServerLifetimeService } from './serverLifetimeService.js';
+ import { setupServerServices, SocketServer } from './serverServices.js';
+ import { CacheControl, serveError, serveFile, WebClientServer } from './webClientServer.js';
++import * as cookie from 'cookie';
++import { resolveRealPath, fileWhitelist } from './fileAccessControl.js';
++import { getArtifactsPath } from './xserviceAuth.js';
+ const require = createRequire(import.meta.url);
+ 
+ declare namespace vsda {
+@@ -100,6 +103,10 @@ class RemoteExtensionHostAgentServer ext
+ 		);
+ 		this._logService.info(`Extension host agent started.`);
+ 		this._reconnectionGraceTime = this._environmentService.reconnectionGraceTime;
++
++		// 初始化白名单（进程级单例，首次调用生效）
++		const releaseRoot = dirname(dirname(this._environmentService.appRoot));
++		fileWhitelist.load(releaseRoot);
+ 	}
+ 
+ 	public async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+@@ -127,7 +134,6 @@ class RemoteExtensionHostAgentServer ext
+ 		if (pathname.startsWith(this._serverProductPath) && pathname.charCodeAt(this._serverProductPath.length) === CharCode.Slash) {
+ 			pathname = pathname.substring(this._serverProductPath.length);
+ 		}
+-
+ 		// Version
+ 		if (pathname === '/version') {
+ 			res.writeHead(200, { 'Content-Type': 'text/plain' });
+@@ -161,6 +167,12 @@ class RemoteExtensionHostAgentServer ext
+ 				return serveError(req, res, 400, `Bad request.`);
+ 			}
+ 
++			// 路径鉴权：白名单 或 会话 artifacts 目录
++			const authorized = await this._checkRemoteResourceAccess(req, filePath);
++			if (!authorized) {
++				return serveError(req, res, 403, `Forbidden.`);
++			}
++
+ 			const responseHeaders: Record<string, string> = Object.create(null);
+ 			if (this._environmentService.isBuilt) {
+ 				if (isEqualOrParent(filePath, this._environmentService.builtinExtensionsPath, !platform.isLinux)
+@@ -189,6 +201,55 @@ class RemoteExtensionHostAgentServer ext
+ 		return void res.end('Not found');
+ 	}
+ 
++	/**
++	 * /vscode-remote-resource 端点路径鉴权：
++	 * 1. 白名单放行（config/whiteFiles 配置的路径，含扩展目录、NLS 缓存等）
++	 * 2. 会话 artifacts 目录放行（需 sessionID/idToken 鉴权）
++	 * 3. 其他路径一律拒绝（fail-close）
++	 */
++	private async _checkRemoteResourceAccess(req: http.IncomingMessage, filePath: string): Promise<boolean> {
++		// 1. 解析真实路径（防软链接/.. 逃逸）
++		let realPath: string;
++		try {
++			realPath = await resolveRealPath(filePath);
++		} catch {
++			this._logService.error(`[RemoteResource] Failed to resolve real path: ${filePath}`);
++			return false; // fail-close
++		}
++
++		// 2. 白名单检查
++		await fileWhitelist.waitUntilLoaded();
++		if (fileWhitelist.isWhitelisted(realPath)) {
++			return true;
++		}
++
++		// 3. 会话 artifacts 目录检查
++		const cookies = cookie.parse(req.headers.cookie || '');
++		const sessionID = cookies['session_id'];
++		const idToken = cookies['id_token'];
++		const runEnv = cookies['run_env'] || 'dev';
++
++		if (!sessionID || !idToken) {
++			this._logService.info(`[RemoteResource] Access denied for ${filePath}: missing session credentials`);
++			return false;
++		}
++
++		try {
++			const artifactsPath = await getArtifactsPath(sessionID, idToken, runEnv);
++			const normalizedPath = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
++			const normalizedAllowed = artifactsPath.endsWith('/') ? artifactsPath.slice(0, -1) : artifactsPath;
++			const allowed = normalizedPath === normalizedAllowed
++				|| normalizedPath.startsWith(normalizedAllowed + '/');
++			if (!allowed) {
++				this._logService.info(`[RemoteResource] Access denied: ${filePath} (resolved: ${realPath}) outside artifacts ${artifactsPath}`);
++			}
++			return allowed;
++		} catch (e) {
++			this._logService.error(`[RemoteResource] Auth check failed for ${filePath}: ${(e as Error).message}`);
++			return false; // fail-close
++		}
++	}
++
+ 	public handleUpgrade(req: http.IncomingMessage, socket: net.Socket) {
+ 		let reconnectionToken = generateUuid();
+ 		let isReconnection = false;
+Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+@@ -18,53 +18,13 @@ import { IRecursiveWatcherOptions } from
+ import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
+ import * as https from 'https';
+ import { constants as cryptoConstants } from 'crypto';
+-import { realpath, readFile, access, constants } from 'fs/promises';
+-import { dirname, join, resolve } from 'path';
+ import { ENV_SERVICE_URLS, getArtifactsPath, getSessionDetail, initXServiceHosts } from './xserviceAuth.js';
+-
+-// 解析真实路径：逐段解析，与内核路径解析语义一致
+-// —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
+-// —— 遇到第一个不存在的段后，剩余尾部原样拼接（覆盖新建文件场景）。
+-// 不能先做字符串层面的 .. 规范化：若 .. 前面是软链接，字符串抵消的结果
+-// 与内核实际落点不一致，会留下绕过空间。
+-// 仅 ENOENT 触发尾部回退，其余错误直接抛出（fail-close）
+-async function resolveRealPath(p: string): Promise<string> {
+-	const abs = p.startsWith('/') ? p : resolve(p);
+-	const segments = abs.split('/').filter(s => s !== '' && s !== '.');
+-	let current = '/';
+-	const tail: string[] = [];
+-	for (const seg of segments) {
+-		if (tail.length > 0) {
+-			// 已进入不存在的尾部区域，剩余段（含 ..）原样保留
+-			tail.push(seg);
+-			continue;
+-		}
+-		if (seg === '..') {
+-			// 内核语义：.. 相对于软链接解析后的真实路径向上一级
+-			current = dirname(current);
+-			continue;
+-		}
+-		const candidate = join(current, seg);
+-		try {
+-			current = await realpath(candidate);
+-		} catch (e) {
+-			if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+-				throw e;
+-			}
+-			tail.push(seg);
+-		}
+-	}
+-	return tail.length > 0 ? join(current, ...tail) : current;
+-}
++import { resolveRealPath, fileWhitelist } from './fileAccessControl.js';
+ 
+ export class RemoteAgentFileSystemProviderChannel extends AbstractDiskFileSystemProviderChannel<RemoteAgentConnectionContext> {
+ 
+ 	private readonly uriTransformerCache = new Map<string, IURITransformer>();
+ 
+-	// 白名单路径列表：从配置文件加载，支持文件或目录
+-	private readWhitelistPaths: string[] = [];
+-	private whitelistLoadPromise: Promise<void> | null = null;
+-
+ 	constructor(
+ 		logService: ILogService,
+ 		private readonly environmentService: IServerEnvironmentService,
+@@ -77,71 +37,26 @@ export class RemoteAgentFileSystemProvid
+ 		// 从启动参数初始化 XService 域名映射（仅首次生效）
+ 		initXServiceHosts(this.environmentService.args['x-service-hosts']);
+ 
+-		// 启动时异步加载白名单配置
+-		this.whitelistLoadPromise = this.loadWhitelistConfig();
++		// 白名单由 fileAccessControl.ts 中的 fileWhitelist 单例统一管理，
++		// 在 RemoteExtensionHostAgentServer 构造时初始化
+ 	}
+ 
+-	// 匹配 sessions/{sessionID}/artifacts/ 路径，捕获 sessionID
+-	private static readonly SESSION_RE = /\/sessions\/([^/]+)\/artifacts\//;
++	// 匹配 sessions/.../artifacts/ 路径（仅做路径过滤，不从路径截取 sessionID）
++	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
+ 
+ 	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
+ 	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
+ 
+ 	/**
+-	 * 加载白名单配置文件：${releaseRoot}/config/whiteFiles
+-	 * releaseRoot = dirname(dirname(appRoot))，即发布包根目录
+-	 * 文件格式：每行一个路径（文件或目录），支持 # 注释，空行忽略
+-	 */
+-	private async loadWhitelistConfig(): Promise<void> {
+-		// appRoot → lib/vscode，回退两级到发布包根目录
+-		const releaseRoot = dirname(dirname(this.environmentService.appRoot));
+-		const configPath = join(releaseRoot, 'config', 'whiteFiles');
+-		try {
+-			// 检查文件是否存在
+-			await access(configPath, constants.R_OK);
+-			const content = await readFile(configPath, 'utf-8');
+-			const lines = content.split('\n')
+-				.map(line => line.trim())
+-				.filter(line => line.length > 0 && !line.startsWith('#'));
+-
+-			this.readWhitelistPaths = lines;
+-			this.logService.info(`[Auth] Whitelist: loaded ${lines.length} entries from ${configPath}`);
+-		} catch (e) {
+-			if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+-				this.logService.info(`[Auth] Whitelist: config file not found at ${configPath}, whitelist disabled`);
+-			} else {
+-				this.logService.error(`[Auth] Whitelist: failed to load config from ${configPath}: ${(e as Error).message}`);
+-			}
+-			this.readWhitelistPaths = [];
+-		}
+-	}
+-
+-	/**
+-	 * 检查路径是否命中白名单（精确匹配文件或目录前缀匹配）
+-	 */
+-	private isWhitelistedPath(realPath: string): boolean {
+-		const normalized = realPath.endsWith('/') ? realPath.slice(0, -1) : realPath;
+-		for (const whitelist of this.readWhitelistPaths) {
+-			const normalizedWhitelist = whitelist.endsWith('/') ? whitelist.slice(0, -1) : whitelist;
+-			if (normalized === normalizedWhitelist || normalized.startsWith(normalizedWhitelist + '/')) {
+-				return true;
+-			}
+-		}
+-		return false;
+-	}
+-
+-	/**
+ 	 * 只读白名单检查：路径（解析软链接/.. 后的真实路径）命中白名单（文件或目录）时放行。
+ 	 * 仅适用于只读命令；'open' 需额外确认非写模式；路径解析失败时不放行（fail-close）。
+ 	 */
+ 	private async isWhitelistedRead(filePath: string, command: string, args: unknown[]): Promise<boolean> {
+ 		// 等待白名单配置加载完成
+-		if (this.whitelistLoadPromise) {
+-			await this.whitelistLoadPromise;
+-		}
++		await fileWhitelist.waitUntilLoaded();
+ 
+ 		// 白名单为空时直接返回
+-		if (this.readWhitelistPaths.length === 0) {
++		if (fileWhitelist.isEmpty()) {
+ 			return false;
+ 		}
+ 
+@@ -164,7 +79,7 @@ export class RemoteAgentFileSystemProvid
+ 			return false;
+ 		}
+ 
+-		const inWhitelist = this.isWhitelistedPath(realPath);
++		const inWhitelist = fileWhitelist.isWhitelisted(realPath);
+ 		if (inWhitelist) {
+ 			this.logService.info(`[Auth] Whitelist: allow read '${command}' on ${filePath}`);
+ 		}
+@@ -279,11 +194,11 @@ export class RemoteAgentFileSystemProvid
+ 	 * 流程：查询会话详情 → 判断 isSkillSession → 解析真实路径 → 判断是否在 skillDir 下 → 上报。
+ 	 * 所有异常静默捕获，仅写日志。
+ 	 */
+-	private runSkillTrackingBypass(fp: string, pathSessionID: string, idToken: string, runEnv: string): void {
++	private runSkillTrackingBypass(fp: string, sessionID: string, idToken: string, runEnv: string): void {
+ 		void (async () => {
+ 			try {
+ 				// 1. 查询会话详情（通常命中 checkFileAccess 已填充的缓存，零网络开销）
+-				const detail = await getSessionDetail(pathSessionID, idToken, runEnv);
++				const detail = await getSessionDetail(sessionID, idToken, runEnv);
+ 
+ 				// 2. 非 Skill 会话 → 跳过
+ 				if (!detail.isSkillSession || !detail.skillDir) {
+@@ -299,7 +214,7 @@ export class RemoteAgentFileSystemProvid
+ 				if (realFilePath === normalizedSkillDir ||
+ 					realFilePath.startsWith(normalizedSkillDir + '/')) {
+ 					// 4. 命中 → 上报 XService
+-					this.recordSkillFileChange(runEnv, pathSessionID, detail.skillName, idToken);
++					this.recordSkillFileChange(runEnv, sessionID, detail.skillName, idToken);
+ 				}
+ 			} catch (e) {
+ 				// 旁路内所有异常静默捕获，绝不影响主流程
+@@ -349,6 +264,9 @@ export class RemoteAgentFileSystemProvid
+ 
+ 	//#region IPC Interception
+ 
++	// 目标路径类命令：copy/rename/cloneFile 的 args[1] 是目标 URI，需单独鉴权防止"写出授权目录"
++	private static readonly TARGET_PATH_COMMANDS = new Set(['copy', 'rename', 'cloneFile']);
++
+ 	override async call<TResult>(ctx: RemoteAgentConnectionContext, command: string, args: unknown[]): Promise<TResult> {
+ 		// 路径类命令（args[0] 是 UriComponents 对象）需要鉴权
+ 		// fd 类命令（args[0] 是数字）跳过鉴权，因为 open/readFile 时已鉴权
+@@ -367,24 +285,34 @@ export class RemoteAgentFileSystemProvid
+ 			}
+ 		}
+ 
++		// 【安全修复】对 copy/rename/cloneFile 命令，额外检查目标路径 args[1]
++		// 防止源路径在 artifacts 内通过检查后，目标路径指向任意进程可写位置（containment 突破）
++		if (RemoteAgentFileSystemProviderChannel.TARGET_PATH_COMMANDS.has(command) && args[1] && typeof args[1] === 'object') {
++			const uriTransformer = this.getUriTransformer(ctx);
++			const _target = args[1] as UriComponents;
++			const targetResource = this.transformIncoming(uriTransformer, _target);
++			const targetPath = targetResource.fsPath;
++			// 目标路径直接走 checkFileAccess（写语义，不查白名单）
++			await this.checkFileAccess(ctx, targetPath);
++		}
++
+ 		// 原有的 writeFile 记录逻辑（改为调用 API）
+ 		if (command === 'writeFile' && fp && typeof fp === 'string') {
+-			// ① 文件变更通知（保留原有逻辑）
+-			if (RemoteAgentFileSystemProviderChannel.SESSION_RE.test(fp)) {
++			// 仅处理 artifacts 目录下的文件
++			if (RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
+ 				const { sessionID, idToken, runEnv } = ctx;
++
++				// ① 文件变更通知（保留原有逻辑）
+ 				if (sessionID && idToken && runEnv) {
+ 					this.recordFileChange(runEnv, sessionID, idToken, fp);
+ 				} else {
+ 					this.logService.info('[FileTracker] Skipping file change record: missing sessionID, idToken, or runEnv in context');
+ 				}
+-			}
+ 
+-			// ② Skill 追踪旁路（fire-and-forget，不阻塞主流程）
+-			const match = RemoteAgentFileSystemProviderChannel.SESSION_RE.exec(fp);
+-			if (match) {
+-				const { idToken, runEnv } = ctx;
+-				if (idToken && runEnv) {
+-					this.runSkillTrackingBypass(fp, match[1], idToken, runEnv);
++				// ② Skill 追踪旁路（fire-and-forget，不阻塞主流程）
++				// sessionID 从环境变量（ctx）获取，不从路径提取
++				if (sessionID && idToken && runEnv) {
++					this.runSkillTrackingBypass(fp, sessionID, idToken, runEnv);
+ 				}
+ 			}
+ 		}
