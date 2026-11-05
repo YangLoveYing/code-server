@@ -1,0 +1,309 @@
+Index: code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
++++ code-server/lib/vscode/src/vs/server/node/remoteFileSystemProviderServer.ts
+@@ -20,7 +20,7 @@ import * as https from 'https';
+ import { constants as cryptoConstants } from 'crypto';
+ import { realpath, readFile, access, constants } from 'fs/promises';
+ import { dirname, join, resolve } from 'path';
+-import { ENV_SERVICE_URLS, getArtifactsPath, initXServiceHosts } from './xserviceAuth.js';
++import { ENV_SERVICE_URLS, getArtifactsPath, getSessionDetail, initXServiceHosts } from './xserviceAuth.js';
+ 
+ // 解析真实路径：逐段解析，与内核路径解析语义一致
+ // —— 每个存在的段都经 realpath 解析（软链接解析后再处理后续 ..），
+@@ -81,7 +81,8 @@ export class RemoteAgentFileSystemProvid
+ 		this.whitelistLoadPromise = this.loadWhitelistConfig();
+ 	}
+ 
+-	private static readonly ARTIFACTS_RE = /\/sessions\/[^/]+\/artifacts\//;
++	// 匹配 sessions/{sessionID}/artifacts/ 路径，捕获 sessionID
++	private static readonly SESSION_RE = /\/sessions\/([^/]+)\/artifacts\//;
+ 
+ 	// 只读路径类命令（fd 类命令 open/read 已在 open 时鉴权，不在此列）
+ 	private static readonly READONLY_COMMANDS = new Set(['stat', 'realpath', 'readdir', 'readFile', 'readFileStream', 'watch', 'unwatch', 'fileChange']);
+@@ -224,6 +225,91 @@ export class RemoteAgentFileSystemProvid
+ 
+ 	//#endregion
+ 
++	//#region Skill Tracking: Record to XService API
++
++	/**
++	 * 调用 XService 接口更新 skill-last-modified.json（状态上报）。
++	 * 接口：POST /api/v1/fileMng/skill/skill-last-modified
++	 */
++	private recordSkillFileChange(runEnv: string, sessionID: string, skillName: string, idToken: string): void {
++		const baseUrl = ENV_SERVICE_URLS[runEnv];
++		if (!baseUrl) {
++			this.logService.error(`[SkillTracker] Unknown run_env: ${runEnv}`);
++			return;
++		}
++
++		const url = `${baseUrl}/api/v1/fileMng/skill/skill-last-modified`;
++		const postData = JSON.stringify({ sessionId: sessionID, skillName });
++
++		const req = https.request(url, {
++			method: 'POST',
++			headers: {
++				'Id-Token': idToken,
++				'Content-Type': 'application/json',
++				'Content-Length': Buffer.byteLength(postData)
++			},
++			timeout: 10000,
++			rejectUnauthorized: false,
++			secureOptions: cryptoConstants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT,
++		}, (res) => {
++			let data = '';
++			res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
++			res.on('end', () => {
++				if (res.statusCode !== 200) {
++					this.logService.error(`[SkillTracker] API request failed with status ${res.statusCode}: ${data}`);
++				}
++			});
++		});
++
++		req.on('error', (e: Error) => {
++			this.logService.error(`[SkillTracker] API request failed: ${e.message}`);
++		});
++
++		req.on('timeout', () => {
++			req.destroy();
++			this.logService.error('[SkillTracker] API request timed out');
++		});
++
++		req.write(postData);
++		req.end();
++	}
++
++	/**
++	 * Skill 追踪旁路：fire-and-forget，不阻塞主流程。
++	 * 流程：查询会话详情 → 判断 isSkillSession → 解析真实路径 → 判断是否在 skillDir 下 → 上报。
++	 * 所有异常静默捕获，仅写日志。
++	 */
++	private runSkillTrackingBypass(fp: string, pathSessionID: string, idToken: string, runEnv: string): void {
++		void (async () => {
++			try {
++				// 1. 查询会话详情（通常命中 checkFileAccess 已填充的缓存，零网络开销）
++				const detail = await getSessionDetail(pathSessionID, idToken, runEnv);
++
++				// 2. 非 Skill 会话 → 跳过
++				if (!detail.isSkillSession || !detail.skillDir) {
++					return;
++				}
++
++				// 3. 解析真实路径，判断是否在 skillDir 下
++				const realFilePath = await resolveRealPath(fp);
++				const normalizedSkillDir = detail.skillDir.endsWith('/')
++					? detail.skillDir.slice(0, -1)
++					: detail.skillDir;
++
++				if (realFilePath === normalizedSkillDir ||
++					realFilePath.startsWith(normalizedSkillDir + '/')) {
++					// 4. 命中 → 上报 XService
++					this.recordSkillFileChange(runEnv, pathSessionID, detail.skillName, idToken);
++				}
++			} catch (e) {
++				// 旁路内所有异常静默捕获，绝不影响主流程
++				this.logService.error(`[SkillTracker] bypass error: ${(e as Error).message}`);
++			}
++		})();
++	}
++
++	//#endregion
++
+ 	//#region Auth: Main entry
+ 
+ 	private async checkFileAccess(ctx: RemoteAgentConnectionContext, filePath: string): Promise<void> {
+@@ -283,7 +369,8 @@ export class RemoteAgentFileSystemProvid
+ 
+ 		// 原有的 writeFile 记录逻辑（改为调用 API）
+ 		if (command === 'writeFile' && fp && typeof fp === 'string') {
+-			if (RemoteAgentFileSystemProviderChannel.ARTIFACTS_RE.test(fp)) {
++			// ① 文件变更通知（保留原有逻辑）
++			if (RemoteAgentFileSystemProviderChannel.SESSION_RE.test(fp)) {
+ 				const { sessionID, idToken, runEnv } = ctx;
+ 				if (sessionID && idToken && runEnv) {
+ 					this.recordFileChange(runEnv, sessionID, idToken, fp);
+@@ -291,6 +378,15 @@ export class RemoteAgentFileSystemProvid
+ 					this.logService.info('[FileTracker] Skipping file change record: missing sessionID, idToken, or runEnv in context');
+ 				}
+ 			}
++
++			// ② Skill 追踪旁路（fire-and-forget，不阻塞主流程）
++			const match = RemoteAgentFileSystemProviderChannel.SESSION_RE.exec(fp);
++			if (match) {
++				const { idToken, runEnv } = ctx;
++				if (idToken && runEnv) {
++					this.runSkillTrackingBypass(fp, match[1], idToken, runEnv);
++				}
++			}
+ 		}
+ 
+ 		return super.call(ctx, command, args);
+Index: code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
+===================================================================
+--- code-server.orig/lib/vscode/src/vs/server/node/xserviceAuth.ts
++++ code-server/lib/vscode/src/vs/server/node/xserviceAuth.ts
+@@ -53,22 +53,67 @@ export function initXServiceHosts(rawJso
+ export { ENV_SERVICE_URLS };
+ const AUTH_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+ 
+-// 进程级共享缓存：sessionID → { artifactsPath, expireAt }
+-const authCache = new Map<string, { artifactsPath: string; expireAt: number }>();
++//#region Session Detail Types
++
++// 缓存条目结构：会话详情（服务于鉴权 + Skill 追踪）
++interface CachedSessionDetail {
++	artifactsPath: string;
++	isSkillSession: boolean;
++	skillName: string;
++	skillDir: string;
++	expireAt: number;
++}
++
++// 对外暴露的会话详情（不含 expireAt）
++export interface SessionDetail {
++	isSkillSession: boolean;
++	skillName: string;
++	skillDir: string;
++}
++
++//#endregion
++
++// 进程级共享缓存：sessionID → CachedSessionDetail
++const authCache = new Map<string, CachedSessionDetail>();
+ 
+ //#region Cache helpers
+ 
+-function getCachedArtifactsPath(sessionID: string): string | null {
++function getCachedSessionDetail(sessionID: string): CachedSessionDetail | null {
+ 	const entry = authCache.get(sessionID);
+ 	if (entry && entry.expireAt > Date.now()) {
+-		return entry.artifactsPath;
++		return entry;
+ 	}
+ 	authCache.delete(sessionID);
+ 	return null;
+ }
+ 
+-function setCachedArtifactsPath(sessionID: string, artifactsPath: string): void {
+-	authCache.set(sessionID, { artifactsPath, expireAt: Date.now() + AUTH_CACHE_TTL });
++function setCachedSessionDetail(sessionID: string, detail: CachedSessionDetail): void {
++	authCache.set(sessionID, detail);
++}
++
++//#endregion
++
++//#region Skill Dir Computation
++
++/**
++ * 根据会话详情计算 skillDir。
++ * - isSkillSession=false → 空串
++ * - isSkillSession=true, skillType="CLI" → {artifactsPath}/plugins（常量）
++ * - isSkillSession=true, skillType="COMMON" 或其他 → {artifactsPath}/{skillName}
++ */
++function computeSkillDir(
++	isSkillSession: boolean,
++	skillType: string,
++	skillName: string,
++	artifactsPath: string
++): string {
++	if (!isSkillSession) {
++		return '';
++	}
++	if (skillType === 'CLI') {
++		return `${artifactsPath}/plugins`;
++	}
++	return `${artifactsPath}/${skillName}`;
+ }
+ 
+ //#endregion
+@@ -95,7 +140,11 @@ function isTokenExpired(idToken: string)
+ 
+ //#region XService API
+ 
+-function fetchArtifactsPath(runEnv: string, sessionID: string, idToken: string): Promise<string> {
++/**
++ * 调用 XService 会话详情接口，返回完整缓存条目。
++ * 接口：GET /api/v1/sessions/{sessionID}/detail?healthCheck=false
++ */
++function fetchSessionDetail(runEnv: string, sessionID: string, idToken: string): Promise<CachedSessionDetail> {
+ 	return new Promise((resolve, reject) => {
+ 		const baseUrl = ENV_SERVICE_URLS[runEnv];
+ 		if (!baseUrl) {
+@@ -114,7 +163,20 @@ function fetchArtifactsPath(runEnv: stri
+ 				try {
+ 					const json = JSON.parse(data);
+ 					if (json.returnCode === 'SUC0000' && json.data?.artifactsPath) {
+-						resolve(json.data.artifactsPath);
++						const { artifactsPath, isSkillSession, skillName, skillType } = json.data;
++						const skillDir = computeSkillDir(
++							!!isSkillSession,
++							skillType || '',
++							skillName || '',
++							artifactsPath
++						);
++						resolve({
++							artifactsPath,
++							isSkillSession: !!isSkillSession,
++							skillName: skillName || '',
++							skillDir,
++							expireAt: Date.now() + AUTH_CACHE_TTL,
++						});
+ 					} else {
+ 						reject(new Error(`XService returned: ${json.returnCode}`));
+ 					}
+@@ -147,16 +209,47 @@ export async function getArtifactsPath(s
+ 		throw new Error('ID-Token is invalid or expired');
+ 	}
+ 
+-	// 2. 缓存：优先从缓存获取允许访问的路径
+-	const cached = getCachedArtifactsPath(sessionID);
++	// 2. 缓存：优先从缓存获取
++	const cached = getCachedSessionDetail(sessionID);
++	if (cached) {
++		return cached.artifactsPath;
++	}
++
++	// 3. 鉴权：调用 XService 接口获取完整会话详情
++	const detail = await fetchSessionDetail(runEnv || 'dev', sessionID, idToken);
++	setCachedSessionDetail(sessionID, detail);
++	return detail.artifactsPath;
++}
++
++/**
++ * 获取会话详情（服务于 Skill 追踪等增强功能）。
++ * 流程：JWT 过期校验 → 内存缓存 → 调用 XService 接口。
++ * 失败时抛出异常，由调用方决定处理策略。
++ */
++export async function getSessionDetail(sessionID: string, idToken: string, runEnv: string): Promise<SessionDetail> {
++	// 1. 认证：JWT 格式校验 + 过期检查
++	if (isTokenExpired(idToken)) {
++		throw new Error('ID-Token is invalid or expired');
++	}
++
++	// 2. 缓存：优先从缓存获取
++	const cached = getCachedSessionDetail(sessionID);
+ 	if (cached) {
+-		return cached;
++		return {
++			isSkillSession: cached.isSkillSession,
++			skillName: cached.skillName,
++			skillDir: cached.skillDir,
++		};
+ 	}
+ 
+-	// 3. 鉴权：调用 XService 接口获取 artifactsPath
+-	const artifactsPath = await fetchArtifactsPath(runEnv || 'dev', sessionID, idToken);
+-	setCachedArtifactsPath(sessionID, artifactsPath);
+-	return artifactsPath;
++	// 3. 调用 XService 接口获取完整会话详情
++	const detail = await fetchSessionDetail(runEnv || 'dev', sessionID, idToken);
++	setCachedSessionDetail(sessionID, detail);
++	return {
++		isSkillSession: detail.isSkillSession,
++		skillName: detail.skillName,
++		skillDir: detail.skillDir,
++	};
+ }
+ 
+ //#endregion
