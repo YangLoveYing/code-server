@@ -134,10 +134,10 @@ export const authenticated = async (req: express.Request): Promise<boolean> => {
       return await isCookieValid(isCookieValidArgs)
     }
     case AuthType.XToken: {
-      // The id-token is verified here (and not against x-service which is only
-      // consulted for the folder check on the root route).  Throwing instead of
-      // returning false avoids a redirect loop to /login.
-      assertXTokenAuthenticated(req)
+      // The id-token signature is verified against the JWK set published by the
+      // auth domain for the request's run-env.  Throwing instead of returning
+      // false avoids a redirect loop to /login.
+      await assertXTokenAuthenticated(req)
       return true
     }
     default: {

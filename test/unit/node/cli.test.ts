@@ -1076,6 +1076,52 @@ describe("toCodeArgs", () => {
   })
 })
 
+describe("auth-domains", () => {
+  beforeEach(() => {
+    delete process.env.AUTH_DOMAINS
+    delete process.env.AUTH_JWK_CACHE_TTL
+    console.log = jest.fn()
+  })
+
+  it("should require auth-domains when auth is x-token", async () => {
+    await expect(setDefaults({ auth: AuthType.XToken })).rejects.toThrow(
+      "--auth-domains is required when --auth=x-token",
+    )
+  })
+
+  it("should parse auth-domains and strip trailing slashes", async () => {
+    const defaultArgs = await setDefaults({
+      auth: AuthType.XToken,
+      "auth-domains": '{"dev":"https://sso.dev/","default":"https://sso.prd/"}',
+    })
+    expect(defaultArgs["auth-domains"]).toEqual({ dev: "https://sso.dev", default: "https://sso.prd" })
+  })
+
+  it("should default the JWK cache ttl and accept an explicit value", async () => {
+    const defaultArgs = await setDefaults(parse([]))
+    expect(defaultArgs["auth-jwk-cache-ttl"]).toBe(300000)
+    const explicitArgs = await setDefaults(parse(["--auth-jwk-cache-ttl=60000"]))
+    expect(explicitArgs["auth-jwk-cache-ttl"]).toBe(60000)
+  })
+
+  it("should reject an auth domain without a protocol", async () => {
+    await expect(
+      setDefaults({ auth: AuthType.XToken, "auth-domains": '{"dev":"sso.dev"}' }),
+    ).rejects.toThrow('auth domain for run-env "dev" must include a protocol')
+  })
+
+  it("should reject auth-domains that are not valid JSON", async () => {
+    await expect(setDefaults({ "auth-domains": "not-json" })).rejects.toThrow(
+      "--auth-domains must be a valid JSON object",
+    )
+  })
+
+  it("should not require auth-domains for other auth types", async () => {
+    const defaultArgs = await setDefaults(parse([]))
+    expect(defaultArgs["auth-domains"]).toStrictEqual({})
+  })
+})
+
 describe("optionDescriptions", () => {
   it("should return the descriptions of all the available options", () => {
     const expectedOptionDescriptions = Object.entries(options)

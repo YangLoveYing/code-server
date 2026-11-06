@@ -1,3 +1,4 @@
+import * as crypto from "crypto"
 import { once } from "events"
 import * as fs from "fs"
 import * as http from "http"
@@ -7,17 +8,27 @@ import { clean, tmpdir } from "../utils/helpers"
 import { describe, test, expect } from "./baseFixture"
 import type { CodeServer } from "./models/CodeServer"
 
+// code-server verifies the id-token signature against this JWK set.
+const { publicKey: jwkPublicKey, privateKey: jwkPrivateKey } = crypto.generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+})
+const JWK = { ...jwkPublicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" }
+
 /**
- * Mock x-service.  Answers GET /session/:id/detail; the response depends on the
- * id-token header and session id so each test can pick a scenario.
+ * Mock x-service.  Answers GET /jwk and GET /session/:id/detail; the session
+ * detail response depends on the session id so each test can pick a scenario.
  */
 const startMockXService = (artifactsPath: string): http.Server => {
   return http.createServer((req, res) => {
-    if (req.headers["id-token"] === "bad-token") {
+    if (req.url?.startsWith("/jwk")) {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      return res.end(JSON.stringify({ keys: [JWK] }))
+    }
+    const sessionId = decodeURIComponent((req.url || "").match(/\/api\/v1\/sessions\/([^/]+)\/detail/)?.[1] || "")
+    if (sessionId === "sess-rejected") {
       res.writeHead(401, { "Content-Type": "application/json" })
       return res.end(JSON.stringify({ returnCode: "AUT0001", data: {} }))
     }
-    const sessionId = decodeURIComponent((req.url || "").match(/\/api\/v1\/sessions\/([^/]+)\/detail/)?.[1] || "")
     if (sessionId === "sess-hang") {
       return // Never respond; the client should time out.
     }
@@ -34,10 +45,11 @@ const startMockXService = (artifactsPath: string): http.Server => {
   })
 }
 
-// JWT-shaped string.  code-server only decodes the payload to check exp.
 const makeToken = (exp: number): string => {
   const encode = (obj: object): string => Buffer.from(JSON.stringify(obj)).toString("base64url")
-  return `${encode({ alg: "none" })}.${encode({ exp })}.signature`
+  const input = `${encode({ alg: "RS256", kid: "test-key" })}.${encode({ exp })}`
+  const signature = crypto.sign("sha256", Buffer.from(input, "utf8"), jwkPrivateKey)
+  return `${input}.${signature.toString("base64url")}`
 }
 
 const tokenExp = (secondsFromNow: number): number => Math.floor(Date.now() / 1000) + secondsFromNow
@@ -61,6 +73,8 @@ describe("x-token auth", args, {}, () => {
     const port = (mockXService.address() as AddressInfo).port
     // The args array is shared with the lazily-spawned code-server instance.
     args.push(`--x-service-default-host=http://127.0.0.1:${port}`)
+    // The run_env cookie is "dev" in these tests.
+    args.push(`--auth-domains={"dev":"http://127.0.0.1:${port}"}`)
   })
 
   test.afterAll(async () => {
@@ -99,6 +113,8 @@ describe("x-token auth", args, {}, () => {
   test("should reject when the session cookies are missing (401)", async ({ codeServer, page }) => {
     const res = await get(codeServer, page, `/?folder=${encodeURIComponent(artifactsPath)}`, {
       id_token: VALID_TOKEN,
+      // run_env is needed to pick the auth domain used to verify the signature.
+      run_env: "dev",
     })
     expect(res.status()).toBe(401)
     expect(await res.text()).toContain("缺少会话信息")
@@ -126,7 +142,7 @@ describe("x-token auth", args, {}, () => {
       codeServer,
       page,
       `/?folder=${encodeURIComponent(artifactsPath)}`,
-      sessionCookies("bad-token", "sess-ok"),
+      sessionCookies(VALID_TOKEN, "sess-rejected"),
     )
     expect(res.status()).toBe(401)
     expect(await res.text()).toContain("认证信息已被拒绝")

@@ -105,6 +105,9 @@ export interface UserProvidedArgs extends UserProvidedCodeArgs {
   "x-service-hosts"?: string | Record<string, string>
   "x-service-default-host"?: string
   "x-service-timeout"?: number
+  // A JSON string on the command line but DefaultedArgs parses it into a map.
+  "auth-domains"?: string | Record<string, string>
+  "auth-jwk-cache-ttl"?: number
   /* Positional arguments. */
   _?: string[]
 }
@@ -167,6 +170,17 @@ export const options: Options<Required<UserProvidedArgs>> = {
   "x-service-timeout": {
     type: "number",
     description: "Timeout in milliseconds for x-service session detail requests.",
+  },
+  "auth-domains": {
+    type: "string",
+    description:
+      'JSON object mapping run-env to authentication domains used to verify the id-token signature, ' +
+      'e.g. {"dev":"https://sso.dev.example.com"}. Domains must include a protocol (http:// or https://) ' +
+      "and publish their public keys at /jwk. Required when --auth=x-token. Can be written as a YAML map in the config file.",
+  },
+  "auth-jwk-cache-ttl": {
+    type: "number",
+    description: "How long in milliseconds a fetched JWK set is cached before it is refetched.",
   },
   password: {
     type: "string",
@@ -550,7 +564,7 @@ export const redactArgs = (args: UserProvidedArgs | DefaultedArgs): UserProvided
  * args and defaulted args exists so we can tell the difference between end
  * values and what the user actually provided on the command line.
  */
-export interface DefaultedArgs extends Omit<ConfigArgs, "x-service-hosts"> {
+export interface DefaultedArgs extends Omit<ConfigArgs, "x-service-hosts" | "auth-domains"> {
   auth: AuthType
   cert?: {
     value: string
@@ -567,6 +581,8 @@ export interface DefaultedArgs extends Omit<ConfigArgs, "x-service-hosts"> {
   "x-service-hosts": Record<string, string>
   "x-service-default-host": string
   "x-service-timeout": number
+  "auth-domains": Record<string, string>
+  "auth-jwk-cache-ttl": number
   "app-name": string
   /* Positional arguments. */
   _: string[]
@@ -701,6 +717,14 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
     args["x-service-timeout"] = Number(process.env.X_SERVICE_TIMEOUT)
   }
 
+  if (process.env.AUTH_DOMAINS) {
+    args["auth-domains"] = process.env.AUTH_DOMAINS
+  }
+
+  if (process.env.AUTH_JWK_CACHE_TTL) {
+    args["auth-jwk-cache-ttl"] = Number(process.env.AUTH_JWK_CACHE_TTL)
+  }
+
   if (process.env.CODE_SERVER_RECONNECTION_GRACE_TIME) {
     args["reconnection-grace-time"] = process.env.CODE_SERVER_RECONNECTION_GRACE_TIME
   }
@@ -755,11 +779,25 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
     throw new Error("--x-service-default-host must include a protocol (http:// or https://)")
   }
 
+  const parsedAuthDomains = parseAuthDomains(args["auth-domains"])
+  const authDomains: Record<string, string> = {}
+  for (const [runEnv, domain] of Object.entries(parsedAuthDomains)) {
+    if (!/^https?:\/\//.test(domain)) {
+      throw new Error(`auth domain for run-env "${runEnv}" must include a protocol (http:// or https://)`)
+    }
+    authDomains[runEnv] = domain.replace(/\/+$/, "")
+  }
+  if (args.auth === AuthType.XToken && Object.keys(authDomains).length === 0) {
+    throw new Error("--auth-domains is required when --auth=x-token")
+  }
+
   return {
     ...args,
     "x-service-hosts": xServiceHosts,
     "x-service-default-host": xServiceDefaultHost,
     "x-service-timeout": args["x-service-timeout"] || 10000,
+    "auth-domains": authDomains,
+    "auth-jwk-cache-ttl": args["auth-jwk-cache-ttl"] || 300000,
     usingEnvPassword,
     usingEnvHashedPassword,
   } as DefaultedArgs // TODO: Technically no guarantee this is fulfilled.
@@ -844,6 +882,30 @@ export function parseXServiceHosts(value?: string | Record<string, string>): Rec
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("--x-service-hosts must be a valid JSON object")
+  }
+  return parsed as Record<string, string>
+}
+
+/**
+ * Parse the auth-domains option (a JSON object string) into a map of run-env to
+ * authentication domain.  An empty value yields an empty map.  Throws on
+ * invalid JSON so misconfiguration fails at startup.
+ */
+export function parseAuthDomains(value?: string | Record<string, string>): Record<string, string> {
+  if (!value) {
+    return {}
+  }
+  if (typeof value === "object") {
+    return value
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error("--auth-domains must be a valid JSON object")
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("--auth-domains must be a valid JSON object")
   }
   return parsed as Record<string, string>
 }

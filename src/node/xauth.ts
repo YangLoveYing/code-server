@@ -23,27 +23,240 @@ export class SessionNotFoundError extends Error {}
 export class UpstreamError extends Error {}
 
 /**
- * The result of verifying an id-token (a JWT).  The signature is not verified;
- * only the payload is decoded and the exp claim checked.  The trust boundary is
- * x-service which authenticates the token itself.
+ * Supported JWT signature algorithms.  `none` and the HMAC family (`HS*`) are
+ * rejected to prevent algorithm-confusion attacks.
  */
-export type IdTokenVerification = { ok: true } | { ok: false; reason: "missing" | "malformed" | "expired" }
+const SIGNATURE_ALGORITHMS: Record<string, { hash: string; dsaEncoding?: "ieee-p1363" }> = {
+  RS256: { hash: "sha256" },
+  RS384: { hash: "sha384" },
+  RS512: { hash: "sha512" },
+  PS256: { hash: "sha256" },
+  PS384: { hash: "sha384" },
+  PS512: { hash: "sha512" },
+  ES256: { hash: "sha256", dsaEncoding: "ieee-p1363" },
+  ES384: { hash: "sha384", dsaEncoding: "ieee-p1363" },
+  ES512: { hash: "sha512", dsaEncoding: "ieee-p1363" },
+}
+
+/** How long a fetched JWK set stays valid when no TTL is configured. */
+const DEFAULT_JWK_CACHE_TTL = 300000
+/** Timeout in milliseconds for fetching the JWK set from an auth domain. */
+const JWK_REQUEST_TIMEOUT = 5000
+/** Refetch at most this often when a token references an unknown kid. */
+const JWK_UNKNOWN_KID_COOLDOWN = 10000
+/** Do not retry a failed JWK fetch more often than this. */
+const JWK_FAILURE_COOLDOWN = 5000
+
+interface JwkCacheEntry {
+  keys: Map<string, crypto.KeyObject>
+  fetchedAt: number
+  expireAt: number
+}
+
+const jwkCache = new Map<string, JwkCacheEntry>()
+const inflightJwkFetches = new Map<string, Promise<JwkCacheEntry>>()
+const jwkFailureAt = new Map<string, number>()
 
 /**
- * Decode the payload of an id-token and check its exp claim.
+ * Fetch and parse the JWK set published by an auth domain at /jwk.
+ *
+ * domain must include a protocol (http:// or https://).  TLS certificates are
+ * not verified for the same reason as x-service requests.
  */
-export const verifyIdToken = (idToken?: string): IdTokenVerification => {
+const requestJwks = async (domain: string): Promise<Map<string, crypto.KeyObject>> => {
+  const url = `${domain.replace(/\/+$/, "")}/jwk`
+  const request = url.startsWith("https://") ? https.request : http.request
+  // rejectUnauthorized is only read by https; harmless for plain http.
+  const options: https.RequestOptions = {
+    timeout: JWK_REQUEST_TIMEOUT,
+    rejectUnauthorized: false,
+    secureOptions:
+      crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
+  }
+
+  let response: http.IncomingMessage
+  try {
+    response = await new Promise((resolve, reject) => {
+      const req = request(url, options, resolve)
+      req.on("timeout", () => req.destroy(new Error(`jwk request timed out after ${JWK_REQUEST_TIMEOUT}ms`)))
+      req.on("error", reject)
+      req.end()
+    })
+  } catch (error) {
+    throw new UpstreamError(
+      error instanceof Error ? `auth domain unreachable: ${error.message}` : "auth domain unreachable",
+    )
+  }
+
+  const status = response.statusCode || 0
+  if (status < 200 || status >= 300) {
+    response.resume()
+    throw new UpstreamError(`auth domain returned ${status} for /jwk`)
+  }
+
+  let body: unknown
+  try {
+    const text = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      response.on("data", (chunk: Buffer) => chunks.push(chunk))
+      response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      response.on("error", reject)
+    })
+    body = JSON.parse(text)
+  } catch {
+    throw new UpstreamError("auth domain returned an invalid /jwk response")
+  }
+
+  // Accept either a bare array or the standard { keys: [...] } wrapper.
+  const items = Array.isArray(body)
+    ? body
+    : body && typeof body === "object" && Array.isArray((body as { keys?: unknown }).keys)
+      ? (body as { keys: unknown[] }).keys
+      : undefined
+  if (!items) {
+    throw new UpstreamError("auth domain returned no JWK keys")
+  }
+
+  const keys = new Map<string, crypto.KeyObject>()
+  for (const item of items) {
+    try {
+      const key = crypto.createPublicKey({ key: item as crypto.JsonWebKey, format: "jwk" })
+      const kid =
+        item && typeof item === "object" && typeof (item as { kid?: unknown }).kid === "string"
+          ? (item as { kid: string }).kid
+          : ""
+      keys.set(kid, key)
+    } catch {
+      // Skip individual keys that cannot be parsed.
+    }
+  }
+  if (keys.size === 0) {
+    throw new UpstreamError("auth domain returned no usable JWK keys")
+  }
+  return keys
+}
+
+/**
+ * Fetch the JWK set for a domain, deduplicating concurrent fetches and caching
+ * the result for cacheTtl milliseconds.
+ */
+const fetchJwks = async (domain: string, cacheTtl: number): Promise<JwkCacheEntry> => {
+  const existing = inflightJwkFetches.get(domain)
+  if (existing) {
+    return existing
+  }
+  const promise = (async () => {
+    const keys = await requestJwks(domain)
+    const now = Date.now()
+    const entry: JwkCacheEntry = { keys, fetchedAt: now, expireAt: now + cacheTtl }
+    jwkCache.set(domain, entry)
+    jwkFailureAt.delete(domain)
+    return entry
+  })()
+  inflightJwkFetches.set(domain, promise)
+  try {
+    return await promise
+  } finally {
+    if (inflightJwkFetches.get(domain) === promise) {
+      inflightJwkFetches.delete(domain)
+    }
+  }
+}
+
+/**
+ * Select the key matching kid, or the single unnamed key when the token has no
+ * kid and exactly one unnamed key is published.
+ */
+const selectJwk = (keys: Map<string, crypto.KeyObject>, kid?: string): crypto.KeyObject | undefined => {
+  if (kid) {
+    return keys.get(kid)
+  }
+  const unnamed = keys.get("")
+  if (unnamed) {
+    return unnamed
+  }
+  if (keys.size === 1) {
+    return keys.values().next().value
+  }
+  return undefined
+}
+
+/**
+ * Resolve the public key for a kid from the domain's JWK set, refetching when
+ * the cache is stale, the kid is unknown, and the failure cooldown has elapsed.
+ */
+const getPublicKey = async (
+  domain: string,
+  kid: string | undefined,
+  cacheTtl: number,
+): Promise<crypto.KeyObject | undefined> => {
+  const now = Date.now()
+  const cached = jwkCache.get(domain)
+  if (cached && cached.expireAt > now) {
+    const key = selectJwk(cached.keys, kid)
+    if (key) {
+      return key
+    }
+    // Avoid a fetch storm when tokens keep referencing unknown kids.
+    if (now - cached.fetchedAt < JWK_UNKNOWN_KID_COOLDOWN) {
+      return undefined
+    }
+  }
+
+  const failedAt = jwkFailureAt.get(domain)
+  if (failedAt !== undefined && now - failedAt < JWK_FAILURE_COOLDOWN) {
+    throw new UpstreamError("auth domain JWK fetch is cooling down after a failure")
+  }
+
+  let entry: JwkCacheEntry
+  try {
+    entry = await fetchJwks(domain, cacheTtl)
+  } catch (error) {
+    jwkFailureAt.set(domain, Date.now())
+    if (error instanceof UpstreamError) {
+      throw error
+    }
+    throw new UpstreamError(error instanceof Error ? error.message : String(error))
+  }
+  return selectJwk(entry.keys, kid)
+}
+
+export type IdTokenVerification =
+  | { ok: true }
+  | { ok: false; reason: "missing" | "malformed" | "expired" | "invalid" | "upstream" }
+
+/**
+ * Verify an id-token: structure and exp locally, then the signature against the
+ * JWK set published by `domain` at /jwk.  Only asymmetric algorithms are
+ * accepted; tokens signed with `none` or an HMAC algorithm are refused.
+ */
+export const verifyIdToken = async (
+  idToken: string | undefined,
+  domain: string | undefined,
+  cacheTtl: number = DEFAULT_JWK_CACHE_TTL,
+): Promise<IdTokenVerification> => {
   if (!idToken) {
     return { ok: false, reason: "missing" }
   }
-  // JWTs are header.payload.signature; we only care about the payload.
-  let payload: unknown
+
+  const parts = idToken.split(".")
+  if (parts.length !== 3) {
+    return { ok: false, reason: "malformed" }
+  }
+
+  let header: { alg?: unknown; kid?: unknown } | null
+  let payload: { exp?: unknown } | null
   try {
-    payload = JSON.parse(Buffer.from(idToken.split(".")[1], "base64url").toString("utf8"))
+    header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"))
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"))
   } catch {
     return { ok: false, reason: "malformed" }
   }
-  const exp = (payload as { exp?: unknown } | null)?.exp
+  if (!header || !payload) {
+    return { ok: false, reason: "malformed" }
+  }
+
+  const exp = payload.exp
   if (typeof exp !== "number") {
     return { ok: false, reason: "malformed" }
   }
@@ -51,7 +264,46 @@ export const verifyIdToken = (idToken?: string): IdTokenVerification => {
   if (exp <= Math.floor(Date.now() / 1000)) {
     return { ok: false, reason: "expired" }
   }
-  return { ok: true }
+
+  const alg = typeof header.alg === "string" ? header.alg : undefined
+  const algorithm = alg ? SIGNATURE_ALGORITHMS[alg] : undefined
+  if (!algorithm) {
+    return { ok: false, reason: "invalid" }
+  }
+  if (!domain) {
+    logger.error("no auth domain configured for the request's run-env")
+    return { ok: false, reason: "upstream" }
+  }
+
+  const kid = typeof header.kid === "string" ? header.kid : undefined
+  let key: crypto.KeyObject | undefined
+  try {
+    key = await getPublicKey(domain, kid, cacheTtl)
+  } catch (error) {
+    logger.error(error instanceof Error ? error.message : String(error), field("auth-domain", domain))
+    return { ok: false, reason: "upstream" }
+  }
+  if (!key) {
+    return { ok: false, reason: "invalid" }
+  }
+
+  const isEc = key.asymmetricKeyType === "ec"
+  const isRsa = key.asymmetricKeyType === "rsa" || key.asymmetricKeyType === "rsa-pss"
+  if ((alg.startsWith("ES") && !isEc) || (!alg.startsWith("ES") && !isRsa)) {
+    return { ok: false, reason: "invalid" }
+  }
+
+  try {
+    const ok = crypto.verify(
+      algorithm.hash,
+      Buffer.from(`${parts[0]}.${parts[1]}`, "utf8"),
+      { key, dsaEncoding: algorithm.dsaEncoding },
+      Buffer.from(parts[2], "base64url"),
+    )
+    return ok ? { ok: true } : { ok: false, reason: "invalid" }
+  } catch {
+    return { ok: false, reason: "invalid" }
+  }
 }
 
 /**
@@ -185,8 +437,12 @@ export const authorizeFolderRequest = async (req: express.Request): Promise<void
  * Verify the id-token cookie, throwing an HttpError with a specific message on
  * failure.  Used by authenticated() in XToken mode.
  */
-export const assertXTokenAuthenticated = (req: express.Request): void => {
-  const result = verifyIdToken(req.cookies["id_token"])
+export const assertXTokenAuthenticated = async (req: express.Request): Promise<void> => {
+  const runEnv = req.cookies["run_env"] as string | undefined
+  const authDomains = req.args["auth-domains"]
+  const domain = (runEnv ? authDomains[runEnv] : undefined) || authDomains["default"]
+
+  const result = await verifyIdToken(req.cookies["id_token"], domain, req.args["auth-jwk-cache-ttl"])
   if (result.ok) {
     return
   }
@@ -194,8 +450,11 @@ export const assertXTokenAuthenticated = (req: express.Request): void => {
     case "missing":
       throw new HttpError("未认证", HttpCode.Unauthorized)
     case "malformed":
+    case "invalid":
       throw new HttpError("认证信息无效", HttpCode.Unauthorized)
     case "expired":
       throw new HttpError("认证信息已过期", HttpCode.Unauthorized)
+    case "upstream":
+      throw new HttpError("认证服务不可用，请稍后重试", HttpCode.BadGateway)
   }
 }
