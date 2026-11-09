@@ -1,13 +1,13 @@
 # code-server x-token 认证鉴权设计
 
 日期：2026-08-13
-状态：已与需求方对齐，已实现
+状态：已与需求方对齐，已实现（认证部分已加入 JWT 签名验签）
 
 ## 1. 背景与目标
 
 内网定制 code-server，接入 x-service 会话体系，实现：
 
-1. 认证：请求携带 `id_token` cookie（JWT），缺失、畸形或过期一律 401 + 报错信息。
+1. 认证：请求携带 `id_token` cookie（JWT）。本地校验结构与 `exp`，再按 `run_env` 对应认证域发布的 JWK 验签；缺失、畸形、过期、签名无效一律 401，认证域不可用 502，错误信息随响应返回。
 2. 鉴权（防水平越权）：访问 `/` 和 `/vscode` 根路径时，`folder` 参数必须非空，且必须是 x-service 查询到的会话 `artifactsPath` 本身或其子目录，否则 403。
 
 x-service 会话查询接口：`GET {host}/api/v1/sessions/{session-id}/detail`（host 含协议），header 携带 `id-token`（否则 401）。返回：
@@ -21,13 +21,20 @@ x-service 会话查询接口：`GET {host}/api/v1/sessions/{session-id}/detail`�
 
 其中 `data.artifactsPath` 即会话对应工作目录。
 
+认证域 JWK 接口：`GET {auth-domain}/jwk`，返回标准 JWK Set（`{"keys":[{...}]}`，也接受裸数组）。key 至少包含 `kty`、`kid`、`alg` 与公钥参数（RSA 的 `n`/`e`，EC 的 `crv`/`x`/`y`）。JWK 只用于验签，不感知业务身份。
+
+> `x-service` 与 `auth-domain` 是两套独立端点：前者判「这个 token 对应哪个会话、能访问哪个目录」，后者判「这个 token 是不是它自己签发的」。缺一不可，见第 6.4 节数据流。
+
 ## 2. 已对齐决策
 
 | 决策点 | 结论 |
 |---|---|
 | 与现有 password 认证的关系 | 完全替换：新增 `AuthType.XToken`，该模式下 password 逻辑不生效 |
 | 校验范围 | 仅 `/` 和 `/vscode`（含 WebSocket 升级）；`/_static`、`/healthz` 等保持公开（401 错误页自身依赖 `/_static` 资源） |
-| JWT 校验深度 | 仅解 payload + 验 `exp`，不验签（信任边界在 x-service，它用 token 鉴权） |
+| JWT 校验深度 | 解 header/payload 校验结构与 `exp`，再按 `alg` 白名单从认证域 `/jwk` 拉公钥验签；拒绝 `none` 与 `HS*`（防算法混淆），仅接受 RS/PS/ES 系列 |
+| 认证域配置 | 按 `run_env` cookie 映射 `auth-domains` 表；未命中回退 `default` 项；`--auth=x-token` 下必须至少配置一项，否则启动即报错。认证域不像 x-service host 有内置默认值 |
+| JWK 缓存 | 按认证域缓存公钥，默认 TTL 300s（`auth-jwk-cache-ttl`）；未知 kid 10s 内不重复拉取，拉取失败 5s 内不重试 |
+| 验签失败语义 | 结构/`exp`/签名任一不通过 → 401（具体文案见第 7 节）；认证域不可达、超时、5xx、未配置 → 502 |
 | x-service host 配置 | 按 `run_env` cookie 映射 host 表；run_env 缺失或未命中时回退默认 host |
 | folder 缺失 / 为空 / 非绝对路径 | 400 Bad Request |
 | workspace 参数 / last-opened 重定向 | 新模式下禁用（workspace 参数 400；.code-workspace 可引用任意目录，放行会绕过校验） |
@@ -39,9 +46,9 @@ x-service 会话查询接口：`GET {host}/api/v1/sessions/{session-id}/detail`�
 
 采用「新增 AuthType（`x-token`）+ 独立模块」：
 
-- `cli.ts`：新增 `AuthType.XToken` 与 3 个配置项（x-service hosts 映射、默认 host、超时）。
-- 新模块 `src/node/xauth.ts`：JWT 解包验 exp、x-service 会话查询、folder 比对，全部可独立单测。
-- `http.ts`：`authenticated()` 增加 `AuthType.XToken` 分支，失败抛带具体信息的 `HttpError`，使现有 `ensureAuthenticated`（HTTP catch-all、WS 升级、update 路由）与 domainProxy/pathProxy/login 的调用方在 XToken 模式下自动获得 401 语义，且不会重定向到 /login 造成循环。
+- `cli.ts`：新增 `AuthType.XToken` 与 5 个配置项（x-service hosts 映射、默认 host、超时；认证域映射、JWK 缓存 TTL）。
+- 新模块 `src/node/xauth.ts`：JWT 解包验 exp、按认证域 JWK 验签（含公钥缓存）、x-service 会话查询、folder 比对，全部可独立单测。
+- `http.ts`：`authenticated()` 增加 `AuthType.XToken` 分支，`await assertXTokenAuthenticated(req)`；验签失败抛带具体信息的 `HttpError`，使现有 `ensureAuthenticated`（HTTP catch-all、WS 升级、update 路由）与 domainProxy/pathProxy/login 的调用方在 XToken 模式下自动获得 401/502 语义，且不会重定向到 /login 造成循环。
 - `routes/vscode.ts`：`GET /` 处理器在 XToken 模式下增加 folder 授权（400/401/403/502），并跳过 last-opened / CLI 参数重定向。
 - `routes/index.ts`：零改动（login/logout 挂载条件 `args.auth === AuthType.Password` 不变，XToken 自然走 else 分支）。
 - password 认证路径完全不被触碰，可回归。
@@ -62,11 +69,29 @@ export enum AuthType {
 
 ### 4.2 新配置项
 
+**x-service 侧（会话与目录鉴权）**
+
 | 配置项 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `x-service-hosts` | string（JSON 对象，如 `{"dev":"http://x.dev:9090","st":"https://x.st:9090"}`） | `{}`（空 map） | run_env → x-service host 映射 |
 | `x-service-default-host` | string | `http://localhost:9090` | run_env 缺失或未命中映射时的回退 host |
 | `x-service-timeout` | number（毫秒） | `10000` | 调用 x-service 的超时 |
+
+**认证域侧（JWK 验签）**
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `auth-domains` | string（JSON 对象，如 `{"dev":"https://sso.dev.example.com"}`） | `{}`（空 map），但 `--auth=x-token` 下必填 | run_env → 认证域映射；未命中时回退 `default` 项。代码从 `${auth-domain}/jwk` 拉公钥验签 |
+| `auth-jwk-cache-ttl` | number（毫秒） | `300000`（5 分钟） | JWK（公钥集合）缓存有效期，到期后下次验签重新拉取 |
+
+验签配置的约束与行为：
+
+- **必须带协议**：`auth-domains` 的每个值都必须是 `http://` 或 `https://` 开头，否则 `setDefaults` 启动即抛错。末尾多余 `/` 会被自动去掉。
+- **必填性**：`--auth=x-token` 且 `auth-domains` 为空对象时，启动报错 `--auth-domains is required when --auth=x-token`。这与 x-service host 不同——后者有内置默认值，前者没有"内置认证域"这一概念，必须显式配置。
+- **run_env 回退**：`run_env` cookie 缺失或未命中映射时使用 `auth-domains.default`；若连 `default` 也没有，请求以 502「认证服务不可用，请稍后重试」失败，而不是 401（属于部署配置缺失，不是客户端凭证错误）。
+- **TLS**：与 x-service 一致，`rejectUnauthorized: false` 不校验证书（兼容内网自签名），并允许 legacy renegotiation；不跟随重定向，3xx 归入 502。
+- **算法**：仅接受非对称算法 `RS256/384/512`、`PS256/384/512`、`ES256/384/512`；`alg=none` 与 `HS*` 一律拒绝（防算法混淆攻击），公钥类型（RSA/EC）与 `alg` 不匹配也拒绝。
+- **缓存**：公钥按认证域缓存，并发请求合并为一次拉取；token 的 `kid` 在缓存中找不到时最多每 10s 重拉一次；拉取失败后 5s 内不再重试（直接 502），避免认证域抖动时打爆上游。
 
 ⚠️ host **必须携带协议**（`http://` 或 `https://`）：代码不写死前缀，`fetchSessionDetail` 直接用 `${host}` 拼 URL（xauth.ts）。未带协议的 host 会在启动时直接报错（`setDefaults` 校验）。
 
@@ -74,7 +99,7 @@ https 支持：传输层用 `node:http/https`（xauth.ts），TLS 证书**不校
 
 #### 4.2.1 三种配置通道
 
-三个配置项均可通过 CLI 参数、环境变量、config.yaml 配置，与 code-server 既有配置机制一致：
+五个配置项均可通过 CLI 参数、环境变量、config.yaml 配置，与 code-server 既有配置机制一致：
 
 **1. CLI 参数**（`parse` 解析 argv，entry.ts）：
 
@@ -82,7 +107,9 @@ https 支持：传输层用 `node:http/https`（xauth.ts），TLS 证书**不校
 code-server --auth=x-token \
   --x-service-hosts='{"dev":"http://127.0.0.1:9999","prod":"http://x.prod:9090"}' \
   --x-service-default-host=http://127.0.0.1:9090 \
-  --x-service-timeout=3000
+  --x-service-timeout=3000 \
+  --auth-domains='{"dev":"http://127.0.0.1:9999","prod":"https://sso.prod.example.com"}' \
+  --auth-jwk-cache-ttl=300000
 ```
 
 **2. 环境变量**（`setDefaults` 中按 `PASSWORD` 等既有模式逐个 `if` 处理，cli.ts；变量非空才生效）：
@@ -92,15 +119,19 @@ code-server --auth=x-token \
 | `X_SERVICE_HOSTS` | `x-service-hosts`（JSON 字符串） |
 | `X_SERVICE_DEFAULT_HOST` | `x-service-default-host` |
 | `X_SERVICE_TIMEOUT` | `x-service-timeout` |
+| `AUTH_DOMAINS` | `auth-domains`（JSON 字符串） |
+| `AUTH_JWK_CACHE_TTL` | `auth-jwk-cache-ttl`（毫秒） |
 
 ```bash
 X_SERVICE_HOSTS='{"dev":"http://127.0.0.1:9999"}' \
 X_SERVICE_DEFAULT_HOST=http://127.0.0.1:9090 \
 X_SERVICE_TIMEOUT=3000 \
+AUTH_DOMAINS='{"dev":"http://127.0.0.1:9999"}' \
+AUTH_JWK_CACHE_TTL=60000 \
 code-server --auth=x-token
 ```
 
-**3. config.yaml**（默认 `~/.config/code-server/config.yaml`；可用 `--config <path>` 指定，或 `$CODE_SERVER_CONFIG` 覆盖路径）。`x-service-hosts` 可直接写原生 YAML map，`parseConfigFile` 会 `JSON.stringify` 后走统一解析，无需手写 JSON 字符串：
+**3. config.yaml**（默认 `~/.config/code-server/config.yaml`；可用 `--config <path>` 指定，或 `$CODE_SERVER_CONFIG` 覆盖路径）。`x-service-hosts` 与 `auth-domains` 都可直接写原生 YAML map，`parseConfigFile` 会把对象值 `JSON.stringify` 后走统一解析，无需手写 JSON 字符串：
 
 ```yaml
 auth: x-token
@@ -109,6 +140,10 @@ x-service-hosts:
   prod: http://x.prod:9090
 x-service-default-host: http://127.0.0.1:9090
 x-service-timeout: 3000
+auth-domains:
+  dev: http://127.0.0.1:9999
+  prod: https://sso.prod.example.com
+auth-jwk-cache-ttl: 300000
 ```
 
 #### 4.2.2 优先级
@@ -124,18 +159,18 @@ X_SERVICE_TIMEOUT=3000 code-server --x-service-timeout=9000
 # 最终 timeout = 3000：环境变量覆盖 CLI，CLI 覆盖 config.yaml
 ```
 
-与 `password` / `hashed-password` / `github-auth` 不同（禁止 CLI 传入），这三个 `x-service-*` 参数三种通道均可配置。
+与 `password` / `hashed-password` / `github-auth` 不同（禁止 CLI 传入），这五个 `x-service-*` / `auth-*` 参数三种通道均可配置。
 
-`setDefaults` 阶段完成 `JSON.parse` 与校验（`x-service-hosts` 非法 JSON 启动时报错），归一为 `Record<string, string>`。
+`setDefaults` 阶段完成 `JSON.parse` 与校验（`x-service-hosts`、`auth-domains` 非法 JSON 启动时报错），分别归一为 `Record<string, string>`；`auth-jwk-cache-ttl` 未配置时取默认 300000。
 
-#### 4.2.3 各环境 x-service host
+#### 4.2.3 各环境 x-service host 与认证域
 
-| run_env | host |
-|---|---|
-| dev | `http://x-service.example.com` |
-| st | `http://x-service-st.example.com` |
-| oa | `http://x-service-oa.example.com` |
-| prd | `http://x-service-prd.example.com` |
+| run_env | x-service host | 认证域（JWK） |
+|---|---|---|
+| dev | `http://x-service.example.com` | `http://sso.example.com` |
+| st | `http://x-service-st.example.com` | `http://sso-st.example.com` |
+| oa | `http://x-service-oa.example.com` | `http://sso-oa.example.com` |
+| prd | `http://x-service-prd.example.com` | `http://sso-prd.example.com` |
 
 config.yaml 完整示例：
 
@@ -148,19 +183,63 @@ x-service-hosts:
   prd: http://x-service-prd.example.com
 x-service-default-host: http://x-service.example.com
 x-service-timeout: 10000
+auth-domains:
+  dev: http://sso.example.com
+  st: http://sso-st.example.com
+  oa: http://sso-oa.example.com
+  prd: http://sso-prd.example.com
+auth-jwk-cache-ttl: 300000
 ```
 
 ## 5. 认证组件 `src/node/xauth.ts`（新模块）
 
-### 5.1 `verifyIdToken(idToken?: string)`
+### 5.1 `verifyIdToken(idToken?, domain?, cacheTtl?)`
 
-返回 `{ ok: true } | { ok: false; reason: "missing" | "malformed" | "expired" }`。
+```ts
+verifyIdToken(
+  idToken: string | undefined,
+  domain: string | undefined,   // 该请求 run_env 对应的认证域
+  cacheTtl = 300000,            // JWK 缓存 TTL
+): Promise<{ ok: true } | { ok: false; reason: "missing" | "malformed" | "expired" | "invalid" | "upstream" }>
+```
 
-- 缺 token → `missing`；
-- `split(".")` 取 payload 段，`Buffer.from(part, "base64url")` + `JSON.parse`，失败 → `malformed`；
-- `payload.exp`（秒）≤ 当前时间 → `expired`。
+按序执行，任一步失败即提前返回，**不再继续后续步骤**：
 
-不验签。无外部依赖（Node 22 原生 base64url）。
+| 步骤 | 检查内容 | 失败 reason |
+|---|---|---|
+| 1 | 无 `id_token` | `missing` |
+| 2 | `split(".")` 不是 3 段 | `malformed` |
+| 3 | 解码并 `JSON.parse` header/payload（`Buffer.from(part, "base64url")`） | `malformed` |
+| 4 | JSON 结果为 `null` | `malformed` |
+| 5 | `payload.exp` 不是 number | `malformed` |
+| 6 | `payload.exp`（秒）≤ 当前时间 | `expired` |
+| 7 | `header.alg` 不在白名单（`none`、`HS*` 均不在内） | `invalid` |
+| 8 | `domain` 未配置（run_env 与 default 都未命中） | `upstream` |
+| 9 | 从认证域拉取 JWK 失败（网络/超时/非 2xx/无可用 key/失败冷却中） | `upstream` |
+| 10 | 缓存中找不到匹配 `kid` 的公钥 | `invalid` |
+| 11 | 公钥类型与 `alg` 不匹配（ES* 需 EC，RS*/PS* 需 RSA） | `invalid` |
+| 12 | `crypto.verify(hash, "${header}.${payload}", publicKey, signature)` 返回 false 或抛错 | `invalid` |
+| 13 | 以上全部通过 | `ok: true` |
+
+实现要点：
+
+- **验签位于 base64url 解码之后，但"解码成功"不等于"一定验签"**：步骤 1、2 在解码之前就会返回；步骤 3~11 也会在到达 `crypto.verify` 之前提前返回。函数只有两种出口——`ok: true` 仅由第 12 步通过产生；其余所有路径都返回 `ok: false`。不存在"解码通过即放行"的分支。
+- **`exp` 读取的是未验签的 payload**：这一步只用于提前拒绝，不能作为任何业务判断依据；真正的信任边界在第 12 步的签名校验。后续若要读取 `sub` / `uid` 等声明，必须只在 `ok: true` 之后使用。
+- **验签输入**是 `${parts[0]}.${parts[1]}` 的原始字符串（不能先解码再拼接），签名是 `Buffer.from(parts[2], "base64url")`。
+- 只用 Node 原生 `crypto`（`crypto.createPublicKey({ format: "jwk" })` + `crypto.verify`），**不引入 jose / jsonwebtoken 等依赖**。
+- 不校验 `iss` / `aud` / `nbf`：本场景下 token 由固定认证域签发并由 x-service 二次校验会话归属，`iss`/`aud` 的语义由认证域自身保证。
+
+#### 5.1.1 JWK 拉取与缓存
+
+`GET ${domain}/jwk`，5s 请求超时；接受 `{ "keys": [...] }` 或裸数组，逐个 key 尝试 `crypto.createPublicKey`，解析失败的 key 跳过；一个可用 key 都没有则视为上游异常。
+
+| 缓存项 | 行为 |
+|---|---|
+| 正向缓存 | 以认证域为 key（不是 run_env），缓存整份 JWK Set，TTL = `auth-jwk-cache-ttl` |
+| 并发合并 | 同一域同时触发的拉取合并为一个 in-flight Promise，避免冷启动打爆认证域 |
+| kid 未命中 | 缓存未过期但找不到 `kid` 时，最多每 10s 重新拉取一次（应对密钥轮换），其余请求直接 `invalid` |
+| 失败冷却 | 拉取失败后 5s 内不再发起请求，直接 `upstream`（502），避免认证域故障时雪崩 |
+| 无 kid | token 头无 `kid` 时，优先用无 kid 的 key；只有唯一 key 时也可匹配 |
 
 ### 5.2 `fetchSessionDetail(host, sessionId, idToken, timeout)`
 
@@ -197,35 +276,41 @@ x-service-timeout: 10000
 
 ```ts
 case AuthType.XToken:
-  assertXTokenAuthenticated(req) // verifyIdToken 失败时抛 HttpError(401, 具体信息)
+  // 先本地解码校验，再用 run_env 对应认证域的公钥验签；
+  // 失败抛 HttpError(401/502, 具体信息)。
+  await assertXTokenAuthenticated(req)
   return true
 ```
 
-关键收益：`ensureAuthenticated` 覆盖的 HTTP catch-all、WS 升级、update 路由，以及 domainProxy/pathProxy/login 中直接调 `authenticated()` 的调用方，在 XToken 模式下自动变为「抛 401 + 报错信息」，而非「跳转 /login」——避免 redirect 循环（XToken 模式下 /login 会重定向回 /）。Password/None 分支零改动。
+`assertXTokenAuthenticated(req)` 的取域逻辑：`authDomains[run_env] || authDomains["default"]`，然后 `await verifyIdToken(id_token, domain, auth-jwk-cache-ttl)`，按 `reason` 映射为 `HttpError`（见第 7 节）。
+
+关键收益：`ensureAuthenticated` 覆盖的 HTTP catch-all、WS 升级、update 路由，以及 domainProxy/pathProxy/login 中直接调 `authenticated()` 的调用方，在 XToken 模式下自动变为「抛 401/502 + 报错信息」，而非「跳转 /login」——避免 redirect 循环（XToken 模式下 /login 会重定向回 /）。Password/None 分支零改动。
 
 ### 6.2 `src/node/routes/vscode.ts` 的 `GET /` 处理器（现 line 118）
 
 - Password/None 分支保持原样。
-- XToken 模式：`authenticated(req)` 已覆盖 token 校验（抛 401）；随后调用 `authorizeFolderRequest(req)`；跳过 last-opened / CLI 参数目录重定向、跳过 `settings.write`。
+- XToken 模式：`authenticated(req)` 已覆盖「解码 + exp + 验签」（失败抛 401/502）；随后调用 `authorizeFolderRequest(req)`；跳过 last-opened / CLI 参数目录重定向、跳过 `settings.write`。
 
 ### 6.3 `src/node/routes/index.ts`
 
-零改动。login/logout 挂载条件不变，XToken 走 else 分支（/login /logout 重定向到 /，最终由 GET / 抛 401）。catch-all 与 WS 路由由 `ensureAuthenticated` 自动获得 XToken 语义（仅验 token，不查 x-service、不查 folder）。
+零改动。login/logout 挂载条件不变，XToken 走 else 分支（/login /logout 重定向到 /，最终由 GET / 抛 401）。catch-all 与 WS 路由由 `ensureAuthenticated` 自动获得 XToken 语义（验签 + 验 exp，不查 x-service、不查 folder）。
 
 ### 6.4 数据流（一次成功页面加载）
 
 ```
 GET /?folder={artifactsPath} + cookies(run_env, session_id, id_token)
  → cookieParser → common → vscode.router GET /
- → authenticated(): 验 id_token（解包 + exp，失败抛 401）
+ → authenticated(): assertXTokenAuthenticated()
+     ① 解 header/payload + 验 exp（失败 401）
+     ② 按 run_env 取认证域，拉/读缓存 JWK，验签（签名错 401，域名不可达 502）
  → authorizeFolderRequest(): 参数校验(400/401)
    → x-service 查会话（异常映射 401/502）→ 目录比对（403）
  → 原处理器 XToken 分支跳过重定向 → next()
- → catch-all: ensureAuthenticated（仅 token）→ VS Code 返回页面 HTML
-后续子资源 /static、API、WS 请求 → catch-all 的 ensureAuthenticated（仅 token，零 x-service 调用）
+ → catch-all: ensureAuthenticated（验签 + exp）→ VS Code 返回页面 HTML
+后续子资源 /static、API、WS 请求 → catch-all 的 ensureAuthenticated（验签 + exp）
 ```
 
-**x-service 每个页面加载只被调用 1 次**，后续子资源请求零额外网络开销。
+**x-service 每个页面加载只被调用 1 次**；认证域 JWK 按 TTL 缓存，正常命中缓存时后续子资源请求不产生任何上游 HTTP 调用（缓存过期后的首个请求会触发一次 `/jwk` 拉取，同样有并发合并）。
 
 已知行为细节：VS Code 关闭工作区时会请求 `/?ew=...`（无 folder），XToken 模式下会得到 400 错误页——可接受（portal 始终带 folder 重新打开）。
 
@@ -236,42 +321,128 @@ GET /?folder={artifactsPath} + cookies(run_env, session_id, id_token)
 | 场景 | 状态码 | 信息 |
 |---|---|---|
 | 缺 id_token | 401 | `未认证` |
-| 缺 session_id / run_env | 401 | `缺少会话信息` |
-| token 畸形 | 401 | `认证信息无效` |
+| token 畸形（非 3 段 / 解码失败 / `exp` 非数字） | 401 | `认证信息无效` |
 | token 过期 | 401 | `认证信息已过期` |
+| 签名无效 / `alg` 不支持 / 公钥类型不匹配 / 未知 kid | 401 | `认证信息无效` |
+| 缺 session_id / run_env（仅 `GET /` 的 folder 授权阶段） | 401 | `缺少会话信息` |
 | x-service 返回 401 | 401 | `认证信息已被拒绝` |
 | 会话不存在（HTTP 404 / 非 SUC0000 / 无 artifactsPath） | 401 | `会话不存在或已失效` |
 | folder 缺失 / 空 / 非绝对路径 | 400 | `必须携带 folder 参数` |
 | 携带 workspace 参数 | 400 | `该认证模式不支持 workspace 参数` |
 | 目录不匹配 | 403 | `无权访问该目录` |
+| 认证域未配置 / 认证域不可达 / 超时 / 非 2xx / 无可用 JWK | 502 | `认证服务不可用，请稍后重试` |
 | x-service 网络错误 / 超时 / 5xx | 502 | `认证服务不可用，请稍后重试` |
 
-日志安全：x-service 调用失败记 `logger.warn/error`，只含 session_id、run_env、状态码，不记录 id_token 全文。
+日志安全：x-service 与认证域调用失败记 `logger.error/warn`，只含 session_id、run_env、认证域、状态码，不记录 id_token 全文，也不记录公钥内容。
 
 ## 8. 测试
 
-### 8.1 单元测试（Jest，`test/unit/`）
+### 8.1 单元测试（Jest，`test/unit/node/xauth.test.ts`）
 
-- `xauth.test.ts`：
-  - `verifyIdToken`：缺失 / 畸形 / 未过期 / 过期边界；
-  - `authorizeFolder`：标准化、尾斜杠、自身/子目录放行、兄弟目录与父目录拒绝；
-  - `fetchSessionDetail`（mock fetch）：x-service 401、非 SUC0000、缺 artifactsPath、网络错误、超时、正常返回。
-- `cli.test.ts` 增补：`x-service-hosts` JSON 解析、非法 JSON 启动报错、默认值。
-- 路由测试：XToken 模式下 `authenticated` 抛错分支、`GET /` 的 400/403 分支。
+- `verifyIdToken`：缺失 / 畸形 / 过期边界 / 合法 RS256 / 合法 ES256；
+- 验签负例：篡改 payload、`alg=none`、`HS256`（后两者断言**不发起 JWK 请求**）、未知 `kid`、JWK 端点报错（`upstream`）、run_env 无匹配且无 default（`upstream`）；
+- 缓存行为：并发验签只拉一次 JWK、TTL 内命中缓存、TTL 过期后重新拉取；
+- 取域回退：run_env 未配置时使用 `default`；
+- `assertXTokenAuthenticated`：各 `reason` 映射为对应的 401/502 文案；
+- `authorizeFolder`：标准化、尾斜杠、自身/子目录放行、兄弟目录与父目录拒绝；
+- `fetchSessionDetail`：x-service 401、非 SUC0000、缺 artifactsPath、网络错误、超时、正常返回。
 
-### 8.2 集成测试（`test/integration/`）
+`test/unit/node/cli.test.ts` 另有 `auth-domains` 专项：x-token 模式必填、JSON 字符串解析、末尾斜杠归一、非法 JSON 报错、`auth-jwk-cache-ttl` 默认值与显式值。
 
-- 起 mock x-service（Node http server，按 id-token header 返回构造响应），起 code-server `--auth=x-token`。
-- 断言：无 cookie → 401；过期 token → 401；无 folder → 400；带 workspace → 400；folder 为兄弟目录 → 403；folder 为会话目录本身 → 200；子目录 → 200；x-service 挂掉 → 502。
+### 8.2 E2E 测试（Playwright，`test/e2e/xauth.test.ts`）
+
+- mock server 同时提供 `GET /jwk`（返回测试 RSA 公钥）与 session detail；测试用私钥对 `{alg:"RS256",kid:"test-key"}.{exp}` 现场签发 token。
+- 启动参数含 `--auth=x-token --x-service-timeout=500 --x-service-default-host=… --auth-domains={"dev":"…"}`。
+- 断言：无 token → 401 `未认证`；过期 → 401 `认证信息已过期`；缺 session_id → 401 `缺少会话信息`；无 folder → 400；带 workspace → 400；x-service 拒绝 → 401；会话不存在（404 与非 SUC0000 两种）→ 401；兄弟目录 → 403；会话目录本身与子目录 → 200；x-service 不响应 → 502。
 
 ## 9. 不覆盖（YAGNI）
 
-- 不验 JWT 签名（不引入 JWKS / 公钥配置）。
-- 不做会话详情缓存（仅页面加载时查询一次，已足够）。
-- 不改 `/manifest.json`、`/mint-key`、`/_static`、`/healthz`。
+- 不校验 `iss` / `aud` / `nbf`（见 5.1）。
+- 不做 token 吊销 / 黑名单查询：本地只判「签名有效 + 未过期」，会话是否仍然有效由 x-service 判定。
+- 不复用 VS Code 侧 `xserviceAuth.ts` 的会话缓存（那是 sessionID 维度、TTL 12h 的缓存，语义与 JWK 缓存不同）。
+- 不做 x-service 会话详情缓存（仅页面加载时查询一次，已足够）；JWK 缓存不在此列，已实现。
+- 不改 `/manifest.json`、`/mint-key`、`/_static`、`/healthz`：这些路由注册在 `ensureAuthenticated` 之前或自身无认证，本次未收口。
 - 不动 password 认证逻辑。
 
 ## 10. 风险与备注
 
-- 无本地缓存意味着 x-service 故障期间无法打开新页面（502），但已打开的会话不受影响（子资源请求不查 x-service）——符合预期。
+- x-service 无本地缓存：故障期间无法打开新页面（502），但已打开的会话不受影响（子资源请求不查 x-service）——符合预期。
+- 认证域的影响面更大：验签覆盖所有经过 `ensureAuthenticated` 的请求，因此认证域故障会让已打开会话的子资源请求也失败（502）。JWK 缓存（默认 5 分钟）只能抵挡「缓存过期后」的那部分请求，部署时应保证认证域可用性不低于 code-server 自身。
+- 密钥轮换延迟：公钥按 TTL 缓存，认证域轮换签名密钥后，最坏情况下旧 key 仍会被接受至 TTL 到期；紧急吊销可把 `auth-jwk-cache-ttl` 调小（代价是更频繁的 `/jwk` 请求）。
+- `exp` 由客户端携带的未验签 payload 读取，只用于提前拒绝；安全边界始终是签名校验，见 5.1。
 - 报错信息为中文硬编码（内网产品，不走 i18n 体系）；如需 i18n 可在实现时挂入。
+
+## 11. 本地调试（`npm run watch` / `npm run dev`）
+
+两个脚本都会把 `--` 之后的参数原样透传给 `out/node/entry.js`（`ci/dev/watch.ts` 与 `ci/dev/watch-light.ts` 中均为 `process.argv.slice(2)`），所以 `--` 后面的内容就是完整的 code-server CLI 参数。
+
+- `npm run dev`：轻量版（仅 `tsc --watch` + 重启 web 服务），内存约 500MB，改 `src/` 时用这个。
+- `npm run watch`：完整版（额外编译 VS Code），仅改动 `lib/vscode` 或 patch 时需要。
+
+### 11.1 基础参数（base64url 解码阶段就需要）
+
+```bash
+npm run dev -- --auth=x-token \
+  --x-service-hosts='{"dev":"http://127.0.0.1:9999"}' \
+  --x-service-default-host=http://127.0.0.1:9999 \
+  --x-service-timeout=3000
+```
+
+**引号很重要**：`--x-service-hosts='{"dev":"..."}'` 必须用单引号包住整个参数。若不加单引号，shell 会吞掉内层双引号，最终 argv 变成 `--x-service-hosts={dev:http://...}`，JSON 非法，启动直接报 `--x-service-hosts must be a valid JSON object`。
+
+### 11.2 本次新增的验签参数
+
+```bash
+npm run dev -- --auth=x-token \
+  --x-service-default-host=http://127.0.0.1:9999 \
+  --auth-domains='{"dev":"http://127.0.0.1:9999"}' \
+  --auth-jwk-cache-ttl=60000
+```
+
+`auth-domains` 指向一个能提供 `GET /jwk` 的服务。本地没有真实认证域时，可参考 `test/e2e/xauth.test.ts` 的 `startMockXService`：它用 `crypto.generateKeyPairSync("rsa")` 生成密钥对，`/jwk` 返回公钥，同时充当 x-service 返回 session detail。调试期把 `auth-jwk-cache-ttl` 调小（如 60000）便于验证密钥更新。
+
+认证域与 x-service 可以指向同一地址（如上例），也可以分开配置；`auth-domains` 未配置时 x-token 模式启动即失败。
+
+两个脚本参数完全一致，需要同时调试 VS Code 侧时把 `npm run dev` 换成 `npm run watch`：
+
+```bash
+npm run watch -- --auth=x-token \
+  --x-service-default-host=http://127.0.0.1:9999 \
+  --auth-domains='{"dev":"http://127.0.0.1:9999"}' \
+  --auth-jwk-cache-ttl=60000
+```
+
+### 11.3 环境变量方式（避免引号问题，优先级最高）
+
+```bash
+AUTH_DOMAINS='{"dev":"http://127.0.0.1:9999"}' \
+AUTH_JWK_CACHE_TTL=60000 \
+X_SERVICE_DEFAULT_HOST=http://127.0.0.1:9999 \
+npm run dev -- --auth=x-token
+```
+
+环境变量 > CLI > config.yaml；`AUTH_DOMAINS` 为非空字符串即覆盖其他来源。
+
+### 11.4 浏览器侧造 cookie
+
+认证依赖三个 cookie，本地调试可在 DevTools Console 直接写入：
+
+```js
+document.cookie = "id_token=<签名后的 JWT>; path=/"
+document.cookie = "session_id=sess-ok; path=/"
+document.cookie = "run_env=dev; path=/"
+```
+
+然后访问 `http://localhost:8080/?folder=<artifactsPath>`。注意 `folder` 必须与 x-service 返回的 `artifactsPath` 一致或是其子目录；`id_token` 必须由 `auth-domains.dev` 对应的私钥签发（或直接复用 mock 服务签发的 token）。
+
+### 11.5 快速自检清单
+
+| 现象 | 排查方向 |
+|---|---|
+| 启动报 `--auth-domains is required when --auth=x-token` | 未配置 `auth-domains`，或 JSON 非法被解析成空对象 |
+| 启动报 `auth domain for run-env "x" must include a protocol` | 认证域缺 `http://` / `https://` |
+| 401 `认证信息无效` | 用了伪造/未签名 token，或 `alg`/`kid` 与 `/jwk` 不匹配（可先 `curl <domain>/jwk` 看返回） |
+| 401 `认证信息已过期` | token 的 `exp` 已过，重新签发 |
+| 502 `认证服务不可用` | 认证域不可达/超时/`/jwk` 非 2xx；也可能是 `run_env` 与 `default` 都没配 |
+| 502 但认证域正常 | 检查 JWK 结构：必须是 `{"keys":[...]}` 或裸数组，且 key 能被 `crypto.createPublicKey` 解析 |
+| 改了密钥但一直验不过 | JWK 缓存未过期，调小 `auth-jwk-cache-ttl` 或重启进程 |

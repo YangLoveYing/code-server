@@ -267,7 +267,7 @@ export const verifyIdToken = async (
 
   const alg = typeof header.alg === "string" ? header.alg : undefined
   const algorithm = alg ? SIGNATURE_ALGORITHMS[alg] : undefined
-  if (!algorithm) {
+  if (!alg || !algorithm) {
     return { ok: false, reason: "invalid" }
   }
   if (!domain) {
