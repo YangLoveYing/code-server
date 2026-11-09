@@ -32,6 +32,11 @@ class Watcher {
     const args = process.argv.slice(2)
     this.webServer = spawn("node", [path.join(this.rootPath, "out/node/entry.js"), ...args])
     onLine(this.webServer, (line) => console.log("[code-server]", line))
+    // The logger writes errors and warnings to stderr, so forward it as well;
+    // otherwise startup failures (e.g. an invalid config file) are invisible.
+    if (this.webServer.stderr) {
+      this.webServer.stderr.on("data", (d: string | Uint8Array) => process.stderr.write(d))
+    }
     const { pid } = this.webServer
 
     this.webServer.on("exit", () => console.log("[code-server]", `Web process ${pid} exited`))
