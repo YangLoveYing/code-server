@@ -47,6 +47,49 @@ const JWK_UNKNOWN_KID_COOLDOWN = 10000
 /** Do not retry a failed JWK fetch more often than this. */
 const JWK_FAILURE_COOLDOWN = 5000
 
+/**
+ * A credential and where it was read from, e.g. "cookie:id_token".  Only the
+ * source is ever logged, never the value, so a mismatch between what the client
+ * sends and what code-server reads is immediately visible.
+ */
+interface Credential {
+  value?: string
+  source: string
+}
+
+/**
+ * Read a credential from the canonical cookie name, the legacy hyphenated
+ * cookie name, or a request header.  Verification is identical regardless of
+ * the source.  Returns source "none" when no source carries a value.
+ */
+const readCredential = (req: express.Request, cookieNames: string[], headerNames: string[]): Credential => {
+  for (const name of cookieNames) {
+    const value = req.cookies ? req.cookies[name] : undefined
+    if (typeof value === "string" && value) {
+      return { value, source: `cookie:${name}` }
+    }
+  }
+  for (const name of headerNames) {
+    const value = req.headers[name]
+    if (typeof value === "string" && value) {
+      return { value, source: `header:${name}` }
+    }
+  }
+  return { source: "none" }
+}
+
+/** The id-token cookie/header: `id_token` is canonical, `id-token` is legacy. */
+const readIdToken = (req: express.Request): Credential =>
+  readCredential(req, ["id_token", "id-token"], ["id-token", "x-id-token"])
+
+/** The session cookie/header: `session_id` is canonical, `session-id` is legacy. */
+const readSessionId = (req: express.Request): Credential =>
+  readCredential(req, ["session_id", "session-id"], ["x-session-id"])
+
+/** The run-env cookie/header: `run_env` is canonical, `run-env` is legacy. */
+const readRunEnv = (req: express.Request): Credential =>
+  readCredential(req, ["run_env", "run-env"], ["x-run-env"])
+
 interface JwkCacheEntry {
   keys: Map<string, crypto.KeyObject>
   fetchedAt: number
@@ -271,7 +314,7 @@ export const verifyIdToken = async (
     return { ok: false, reason: "invalid" }
   }
   if (!domain) {
-    logger.error("no auth domain configured for the request's run-env")
+    logger.error("[Auth] no auth domain configured for the request's run-env")
     return { ok: false, reason: "upstream" }
   }
 
@@ -280,7 +323,8 @@ export const verifyIdToken = async (
   try {
     key = await getPublicKey(domain, kid, cacheTtl)
   } catch (error) {
-    logger.error(error instanceof Error ? error.message : String(error), field("auth-domain", domain))
+    const message = error instanceof Error ? error.message : String(error)
+    logger.error(`[Auth] jwk fetch failed: ${message}`, field("auth-domain", domain))
     return { ok: false, reason: "upstream" }
   }
   if (!key) {
@@ -304,6 +348,51 @@ export const verifyIdToken = async (
   } catch {
     return { ok: false, reason: "invalid" }
   }
+}
+
+/**
+ * Verify the id-token against each auth domain of the run-env in order and
+ * accept it as soon as one domain verifies the signature.
+ *
+ * A run-env can list several domains because developers sometimes obtain the
+ * token from another environment (e.g. production) while using the dev
+ * environment, so the token may be signed by any of them.
+ *
+ * Failures that do not depend on the domain (missing, malformed, expired) stop
+ * the loop immediately.  When no domain verifies the token, an upstream failure
+ * wins over a rejection: the token may have been signed by a domain that is
+ * currently unavailable, which is worth retrying rather than reporting 401.
+ */
+export const verifyIdTokenAgainstDomains = async (
+  idToken: string | undefined,
+  domains: string[] | undefined,
+  cacheTtl: number = DEFAULT_JWK_CACHE_TTL,
+): Promise<IdTokenVerification> => {
+  if (!domains || domains.length === 0) {
+    // Keeps the original order of checks: a missing token is "missing", not
+    // "upstream", even when no auth domain is configured.
+    return verifyIdToken(idToken, undefined, cacheTtl)
+  }
+
+  let rejection: IdTokenVerification = { ok: false, reason: "invalid" }
+  let sawUpstream = false
+  for (const domain of domains) {
+    const result = await verifyIdToken(idToken, domain, cacheTtl)
+    if (result.ok) {
+      return result
+    }
+    if (result.reason === "missing" || result.reason === "malformed" || result.reason === "expired") {
+      // These checks only look at the token itself, so every domain would return
+      // the same reason; trying the remaining domains cannot change the outcome.
+      return result
+    }
+    if (result.reason === "upstream") {
+      sawUpstream = true
+    } else {
+      rejection = result
+    }
+  }
+  return sawUpstream ? { ok: false, reason: "upstream" } : rejection
 }
 
 /**
@@ -400,35 +489,67 @@ export const authorizeFolderRequest = async (req: express.Request): Promise<void
     throw new HttpError("该认证模式不支持 workspace 参数", HttpCode.BadRequest)
   }
 
-  const sessionId = req.cookies["session_id"] as string | undefined
-  const runEnv = req.cookies["run_env"] as string | undefined
-  if (!sessionId || !runEnv) {
+  const sessionId = readSessionId(req)
+  const runEnv = readRunEnv(req)
+  const idToken = readIdToken(req)
+  const sessionIdValue = sessionId.value
+  const runEnvValue = runEnv.value
+  const idTokenValue = idToken.value
+  if (!sessionIdValue || !runEnvValue || !idTokenValue) {
+    logger.warn(
+      "[Auth] session context missing",
+      field("session-id-source", sessionId.source),
+      field("run-env-source", runEnv.source),
+      field("id-token-source", idToken.source),
+    )
     throw new HttpError("缺少会话信息", HttpCode.Unauthorized)
   }
 
   const hosts = req.args["x-service-hosts"]
-  const host = hosts[runEnv] || req.args["x-service-default-host"]
+  const host = hosts[runEnvValue] || req.args["x-service-default-host"]
 
   let artifactsPath: string
   try {
-    artifactsPath = await fetchSessionDetail(host, sessionId, req.cookies["id_token"], req.args["x-service-timeout"])
+    artifactsPath = await fetchSessionDetail(host, sessionIdValue, idTokenValue, req.args["x-service-timeout"])
   } catch (error) {
     if (error instanceof TokenRejectedError) {
-      logger.warn(error.message, field("session-id", sessionId), field("run-env", runEnv))
+      logger.warn(
+        "[Auth] x-service rejected the id-token",
+        field("session-id", sessionIdValue),
+        field("run-env", runEnvValue),
+        field("x-service-host", host),
+      )
       throw new HttpError("认证信息已被拒绝", HttpCode.Unauthorized)
     }
     if (error instanceof SessionNotFoundError) {
-      logger.warn(error.message, field("session-id", sessionId), field("run-env", runEnv))
+      logger.warn(
+        "[Auth] session not found in x-service",
+        field("session-id", sessionIdValue),
+        field("run-env", runEnvValue),
+        field("x-service-host", host),
+      )
       throw new HttpError("会话不存在或已失效", HttpCode.Unauthorized)
     }
     if (error instanceof UpstreamError) {
-      logger.error(error.message, field("session-id", sessionId), field("run-env", runEnv))
+      logger.error(
+        `[Auth] x-service unreachable: ${error.message}`,
+        field("session-id", sessionIdValue),
+        field("run-env", runEnvValue),
+        field("x-service-host", host),
+      )
       throw new HttpError("认证服务不可用，请稍后重试", HttpCode.BadGateway)
     }
     throw error
   }
 
   if (!authorizeFolder(folder, artifactsPath)) {
+    logger.warn(
+      "[Auth] folder is outside the session artifacts path",
+      field("run-env", runEnvValue),
+      field("session-id", sessionIdValue),
+      field("folder", folder),
+      field("artifacts-path", artifactsPath),
+    )
     throw new HttpError("无权访问该目录", HttpCode.Forbidden)
   }
 }
@@ -438,14 +559,36 @@ export const authorizeFolderRequest = async (req: express.Request): Promise<void
  * failure.  Used by authenticated() in XToken mode.
  */
 export const assertXTokenAuthenticated = async (req: express.Request): Promise<void> => {
-  const runEnv = req.cookies["run_env"] as string | undefined
+  const idToken = readIdToken(req)
+  const runEnv = readRunEnv(req)
   const authDomains = req.args["auth-domains"]
-  const domain = (runEnv ? authDomains[runEnv] : undefined) || authDomains["default"]
+  // run-env is a per-request value (cookie `run_env`, legacy `run-env`, or an
+  // `x-run-env` header).  There is no process-wide environment identifier:
+  // the request value selects an entry from --auth-domains, falling back to its
+  // `default` entry when the value is absent or not in the map.  An entry may
+  // list several domains (e.g. dev + prd) and any one of them may verify the
+  // token.
+  const mappedDomains = runEnv.value ? authDomains[runEnv.value] : undefined
+  const domains = mappedDomains && mappedDomains.length > 0 ? mappedDomains : authDomains["default"] || []
 
-  const result = await verifyIdToken(req.cookies["id_token"], domain, req.args["auth-jwk-cache-ttl"])
+  const result = await verifyIdTokenAgainstDomains(idToken.value, domains, req.args["auth-jwk-cache-ttl"])
   if (result.ok) {
     return
   }
+  // 401 responses are not logged by the HTTP error handler, so log the rejection
+  // reason and the context needed to locate it here.  The token itself is never
+  // logged; only where it came from.
+  logger.warn(
+    "[Auth] id-token rejected",
+    field("reason", result.reason),
+    field("auth-type", req.args.auth),
+    field("id-token-source", idToken.source),
+    field("run-env", runEnv.value || "none"),
+    field("run-env-source", runEnv.source),
+    field("run-env-matched", mappedDomains ? "yes" : "no"),
+    field("auth-domains", domains.join(",") || "none"),
+    field("auth-domain-source", mappedDomains ? "auth-domains" : domains.length > 0 ? "auth-domains.default" : "none"),
+  )
   switch (result.reason) {
     case "missing":
       throw new HttpError("未认证", HttpCode.Unauthorized)

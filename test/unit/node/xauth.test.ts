@@ -17,6 +17,9 @@ const { publicKey: ecPublicKey, privateKey: ecPrivateKey } = crypto.generateKeyP
 
 const RSA_JWK = { ...rsaPublicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" }
 const EC_JWK = { ...ecPublicKey.export({ format: "jwk" }), kid: "test-key", alg: "ES256", use: "sig" }
+// A key that did not sign the test tokens, used for domains that must reject them.
+const { publicKey: otherRsaPublicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 })
+const OTHER_RSA_JWK = { ...otherRsaPublicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" }
 
 const HASHES: Record<string, string> = { RS256: "sha256", ES256: "sha256" }
 
@@ -44,6 +47,7 @@ const servers: http.Server[] = []
  */
 const startJwkServer = async (
   handler?: (req: http.IncomingMessage, res: http.ServerResponse) => void,
+  keys: object[] = [RSA_JWK],
 ): Promise<{ url: string; requests: () => number }> => {
   let requests = 0
   const server = http.createServer((req, res) => {
@@ -58,7 +62,7 @@ const startJwkServer = async (
       return
     }
     res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify({ keys: [RSA_JWK] }))
+    res.end(JSON.stringify({ keys }))
   })
   servers.push(server)
   server.listen(0, "127.0.0.1")
@@ -196,7 +200,7 @@ describe("verifyIdToken", () => {
     ).rejects.toBeInstanceOf(HttpError)
     await expectHttpError(
       assertXTokenAuthenticated(
-        makeReq({ id_token: VALID_TOKEN, run_env: "prd" }, { "auth-domains": { dev: server.url } }),
+        makeReq({ id_token: VALID_TOKEN, run_env: "prd" }, { "auth-domains": { dev: [server.url] } }),
       ),
       502,
       "认证服务不可用，请稍后重试",
@@ -207,9 +211,72 @@ describe("verifyIdToken", () => {
     const server = await startJwkServer()
     await expect(
       assertXTokenAuthenticated(
-        makeReq({ id_token: VALID_TOKEN, run_env: "prd" }, { "auth-domains": { default: server.url } }),
+        makeReq({ id_token: VALID_TOKEN, run_env: "prd" }, { "auth-domains": { default: [server.url] } }),
       ),
     ).resolves.toBeUndefined()
+  })
+
+  it("should accept a token signed by any of the run_env's domains", async () => {
+    // The first domain publishes a different key, so it rejects the token and
+    // the second domain (the one that signed it) must accept it.
+    const devServer = await startJwkServer(undefined, [OTHER_RSA_JWK])
+    const prdServer = await startJwkServer()
+    // The token is signed by the production key but the request uses run_env=dev
+    // with both domains configured; the second domain must accept it.
+    await expect(
+      assertXTokenAuthenticated(
+        makeReq({ id_token: VALID_TOKEN, run_env: "dev" }, { "auth-domains": { dev: [devServer.url, prdServer.url] } }),
+      ),
+    ).resolves.toBeUndefined()
+    expect(devServer.requests()).toBe(1)
+    expect(prdServer.requests()).toBe(1)
+  })
+
+  it("should stop trying domains after the first one verifies the token", async () => {
+    const devServer = await startJwkServer()
+    const prdServer = await startJwkServer()
+    await expect(
+      assertXTokenAuthenticated(
+        makeReq({ id_token: VALID_TOKEN, run_env: "dev" }, { "auth-domains": { dev: [devServer.url, prdServer.url] } }),
+      ),
+    ).resolves.toBeUndefined()
+    expect(devServer.requests()).toBe(1)
+    expect(prdServer.requests()).toBe(0)
+  })
+
+  it("should reject a token when none of the run_env's domains verify it", async () => {
+    const unknownKeyServer = await startJwkServer(undefined, [OTHER_RSA_JWK])
+    const anotherUnknownKeyServer = await startJwkServer(undefined, [OTHER_RSA_JWK])
+    await expectHttpError(
+      assertXTokenAuthenticated(
+        makeReq(
+          { id_token: VALID_TOKEN, run_env: "dev" },
+          { "auth-domains": { dev: [unknownKeyServer.url, anotherUnknownKeyServer.url] } },
+        ),
+      ),
+      401,
+      "认证信息无效",
+    )
+    expect(unknownKeyServer.requests()).toBe(1)
+    expect(anotherUnknownKeyServer.requests()).toBe(1)
+  })
+
+  it("should report 502 when a domain is unreachable and no other domain verifies the token", async () => {
+    const brokenServer = await startJwkServer((_req, res) => {
+      res.writeHead(500)
+      res.end("boom")
+    })
+    const unknownKeyServer = await startJwkServer(undefined, [OTHER_RSA_JWK])
+    await expectHttpError(
+      assertXTokenAuthenticated(
+        makeReq(
+          { id_token: VALID_TOKEN, run_env: "dev" },
+          { "auth-domains": { dev: [brokenServer.url, unknownKeyServer.url] } },
+        ),
+      ),
+      502,
+      "认证服务不可用，请稍后重试",
+    )
   })
 
   it("should throw 401 errors with specific messages", async () => {

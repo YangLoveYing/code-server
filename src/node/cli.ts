@@ -106,7 +106,8 @@ export interface UserProvidedArgs extends UserProvidedCodeArgs {
   "x-service-default-host"?: string
   "x-service-timeout"?: number
   // A JSON string on the command line but DefaultedArgs parses it into a map.
-  "auth-domains"?: string | Record<string, string>
+  // Each run-env maps to one domain or a list of domains tried in order.
+  "auth-domains"?: string | Record<string, string | string[]>
   "auth-jwk-cache-ttl"?: number
   /* Positional arguments. */
   _?: string[]
@@ -174,9 +175,11 @@ export const options: Options<Required<UserProvidedArgs>> = {
   "auth-domains": {
     type: "string",
     description:
-      'JSON object mapping run-env to authentication domains used to verify the id-token signature, ' +
-      'e.g. {"dev":"https://sso.dev.example.com"}. Domains must include a protocol (http:// or https://) ' +
-      "and publish their public keys at /jwk. Required when --auth=x-token. Can be written as a YAML map in the config file.",
+      "JSON object mapping run-env to authentication domains used to verify the id-token signature, " +
+      'e.g. {"dev":"https://sso.dev.example.com"} or {"dev":["https://sso.dev.example.com","https://sso.prd.example.com"]}. ' +
+      "A run-env may list several domains; they are tried in order and the token is accepted if any of them verifies it. " +
+      "Domains must include a protocol (http:// or https://) and publish their public keys at /jwk. " +
+      "Required when --auth=x-token. Can be written as a YAML map with string or list values in the config file.",
   },
   "auth-jwk-cache-ttl": {
     type: "number",
@@ -581,7 +584,7 @@ export interface DefaultedArgs extends Omit<ConfigArgs, "x-service-hosts" | "aut
   "x-service-hosts": Record<string, string>
   "x-service-default-host": string
   "x-service-timeout": number
-  "auth-domains": Record<string, string>
+  "auth-domains": Record<string, string[]>
   "auth-jwk-cache-ttl": number
   "app-name": string
   /* Positional arguments. */
@@ -780,15 +783,45 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
   }
 
   const parsedAuthDomains = parseAuthDomains(args["auth-domains"])
-  const authDomains: Record<string, string> = {}
-  for (const [runEnv, domain] of Object.entries(parsedAuthDomains)) {
-    if (!/^https?:\/\//.test(domain)) {
-      throw new Error(`auth domain for run-env "${runEnv}" must include a protocol (http:// or https://)`)
+  const authDomains: Record<string, string[]> = {}
+  for (const [runEnv, domains] of Object.entries(parsedAuthDomains)) {
+    const normalized: string[] = []
+    for (const domain of domains) {
+      if (!/^https?:\/\//.test(domain)) {
+        throw new Error(`auth domain for run-env "${runEnv}" must include a protocol (http:// or https://)`)
+      }
+      // Several run-envs commonly share a domain (e.g. the production domain in
+      // dev), so keep the order but drop duplicates.
+      const trimmed = domain.replace(/\/+$/, "")
+      if (!normalized.includes(trimmed)) {
+        normalized.push(trimmed)
+      }
     }
-    authDomains[runEnv] = domain.replace(/\/+$/, "")
+    authDomains[runEnv] = normalized
   }
   if (args.auth === AuthType.XToken && Object.keys(authDomains).length === 0) {
     throw new Error("--auth-domains is required when --auth=x-token")
+  }
+
+  if (args.auth === AuthType.XToken) {
+    // There is no process-wide environment identifier: the environment is
+    // selected per request from the run_env cookie (legacy run-env) or the
+    // x-run-env header.  Log the mapping once here instead of per request.
+    const configuredRunEnvs = Array.from(new Set([...Object.keys(xServiceHosts), ...Object.keys(authDomains)]))
+    logger.info(
+      "[Auth] x-token enabled; environment is selected per request from cookie run_env (legacy run-env) or header x-run-env, falling back to auth-domains.default",
+      field("auth-type", args.auth),
+      field("configured-run-envs", configuredRunEnvs.join(",") || "none"),
+      field("auth-domains-has-default", authDomains["default"] ? "yes" : "no"),
+    )
+    logger.info(
+      "[Auth] config loaded",
+      field("x-service-hosts", JSON.stringify(xServiceHosts)),
+      field("x-service-default-host", xServiceDefaultHost),
+      field("x-service-timeout-ms", String(args["x-service-timeout"] || 10000)),
+      field("auth-domains", JSON.stringify(authDomains)),
+      field("auth-jwk-cache-ttl-ms", String(args["auth-jwk-cache-ttl"] || 300000)),
+    )
   }
 
   return {
@@ -887,27 +920,42 @@ export function parseXServiceHosts(value?: string | Record<string, string>): Rec
 }
 
 /**
- * Parse the auth-domains option (a JSON object string) into a map of run-env to
- * authentication domain.  An empty value yields an empty map.  Throws on
- * invalid JSON so misconfiguration fails at startup.
+ * Parse the auth-domains option into a map of run-env to authentication
+ * domains.  Values may be a single domain string or a list of domains, and an
+ * empty value yields an empty map.  Throws on invalid JSON or values so
+ * misconfiguration fails at startup.
  */
-export function parseAuthDomains(value?: string | Record<string, string>): Record<string, string> {
+export function parseAuthDomains(value?: string | Record<string, string | string[]>): Record<string, string[]> {
   if (!value) {
     return {}
   }
-  if (typeof value === "object") {
-    return value
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(value)
-  } catch {
-    throw new Error("--auth-domains must be a valid JSON object")
+  let parsed: unknown = value
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      throw new Error("--auth-domains must be a valid JSON object")
+    }
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("--auth-domains must be a valid JSON object")
   }
-  return parsed as Record<string, string>
+  const authDomains: Record<string, string[]> = {}
+  for (const [runEnv, item] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof item === "string") {
+      authDomains[runEnv] = [item]
+      continue
+    }
+    if (Array.isArray(item) && item.every((domain) => typeof domain === "string")) {
+      if (item.length === 0) {
+        throw new Error(`auth domains for run-env "${runEnv}" must not be empty`)
+      }
+      authDomains[runEnv] = item as string[]
+      continue
+    }
+    throw new Error(`auth domains for run-env "${runEnv}" must be a string or an array of strings`)
+  }
+  return authDomains
 }
 
 /**

@@ -1094,7 +1094,36 @@ describe("auth-domains", () => {
       auth: AuthType.XToken,
       "auth-domains": '{"dev":"https://sso.dev/","default":"https://sso.prd/"}',
     })
-    expect(defaultArgs["auth-domains"]).toEqual({ dev: "https://sso.dev", default: "https://sso.prd" })
+    expect(defaultArgs["auth-domains"]).toEqual({ dev: ["https://sso.dev"], default: ["https://sso.prd"] })
+  })
+
+  it("should parse multiple auth domains per run-env and dedupe them", async () => {
+    const defaultArgs = await setDefaults({
+      auth: AuthType.XToken,
+      "auth-domains": '{"dev":["https://sso.dev/","https://sso.prd","https://sso.prd/"],"prd":"https://sso.prd"}',
+    })
+    expect(defaultArgs["auth-domains"]).toEqual({
+      dev: ["https://sso.dev", "https://sso.prd"],
+      prd: ["https://sso.prd"],
+    })
+  })
+
+  it("should parse auth-domains from a YAML map with list values", async () => {
+    const configArgs = parseConfigFile(
+      ["auth: x-token", "auth-domains:", "  dev:", "    - https://sso.dev", "    - https://sso.prd", ""].join("\n"),
+      "/fake-config-path",
+    )
+    const defaultArgs = await setDefaults({}, configArgs)
+    expect(defaultArgs["auth-domains"]).toEqual({ dev: ["https://sso.dev", "https://sso.prd"] })
+  })
+
+  it("should reject empty or non-string auth domain lists", async () => {
+    await expect(setDefaults({ auth: AuthType.XToken, "auth-domains": '{"dev":[]}' })).rejects.toThrow(
+      'auth domains for run-env "dev" must not be empty',
+    )
+    await expect(setDefaults({ auth: AuthType.XToken, "auth-domains": '{"dev":[1]}' })).rejects.toThrow(
+      'auth domains for run-env "dev" must be a string or an array of strings',
+    )
   })
 
   it("should default the JWK cache ttl and accept an explicit value", async () => {
