@@ -43,3 +43,4 @@ add-commit-id.diff
 disable-debug-console-ports.diff
 disable-notifications.diff
 catch-skill-modified.diff
+complete-vscode-remote-resource.diff
