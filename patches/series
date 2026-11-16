@@ -44,3 +44,6 @@ disable-debug-console-ports.diff
 disable-notifications.diff
 catch-skill-modified.diff
 complete-vscode-remote-resource.diff
+disable-extension-install.diff
+disable-mcp.diff
+
