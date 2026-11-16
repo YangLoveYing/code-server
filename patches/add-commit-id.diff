@@ -132,7 +132,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  
  export const SCMInputContextKeys = {
  	SCMInputHasValidationMessage: new RawContextKey<boolean>('scmInputHasValidationMessage', false),
-@@ -369,6 +370,16 @@ export class SCMInputWidget {
+@@ -369,6 +370,18 @@ export class SCMInputWidget {
  	private toolbar: SCMInputWidgetToolbar;
  	private readonly disposables = new DisposableStore();
  
@@ -145,11 +145,13 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +	private projectListItems: { element: HTMLElement; item: IProjectNumberItem }[] = [];
 +	private readonly _onDropdownVisibilityChanged = new Emitter<void>();
 +	private projectList!: HTMLElement;
++	private readonly noneProjectText = localize('scmInput.noKanbanCard', "无看板卡片");
++	private projectNoneSelected = false;
 +
  	private model: { readonly input: ISCMInput; readonly textModel: ITextModel } | undefined;
  	private repositoryIdContextKey: IContextKey<string | undefined>;
  	private validationMessageContextKey: IContextKey<boolean>;
-@@ -459,6 +470,9 @@ export class SCMInputWidget {
+@@ -459,6 +472,9 @@ export class SCMInputWidget {
  		this.repositoryDisposables.add(textModel.onDidChangeContent(() => {
  			input.setValue(textModel.getValue(), true);
  			triggerValidation();
@@ -159,7 +161,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  		}));
  
  		// Aria label & placeholder text
-@@ -531,6 +545,9 @@ export class SCMInputWidget {
+@@ -531,6 +547,9 @@ export class SCMInputWidget {
  		// Toolbar
  		this.toolbar.setInput(input);
  
@@ -169,7 +171,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  		// Save model
  		this.model = { input, textModel };
  	}
-@@ -576,10 +593,13 @@ export class SCMInputWidget {
+@@ -576,10 +595,13 @@ export class SCMInputWidget {
  		@IOpenerService private readonly openerService: IOpenerService,
  		@IAccessibilityService private readonly accessibilityService: IAccessibilityService,
  		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
@@ -185,7 +187,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  
  		this.contextKeyService = this.disposables.add(contextKeyService.createScoped(this.element));
  		this.repositoryIdContextKey = this.contextKeyService.createKey('scmRepository', undefined);
-@@ -659,7 +679,10 @@ export class SCMInputWidget {
+@@ -659,7 +681,10 @@ export class SCMInputWidget {
  
  		Event.filter(this.configurationService.onDidChangeConfiguration, e => e.affectsConfiguration('scm.showInputActionButton'))(() => this.layout(), this, this.disposables);
  
@@ -197,7 +199,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  
  		// Toolbar
  		this.toolbar = instantiationService2.createInstance(SCMInputWidgetToolbar, this.toolbarContainer, {
-@@ -691,12 +714,30 @@ export class SCMInputWidget {
+@@ -691,12 +716,30 @@ export class SCMInputWidget {
  		const inputMaxLines = typeof inputMaxLinesConfig === 'number' ? clamp(inputMaxLinesConfig, 1, 50) : 10;
  		const editorMaxHeight = inputMaxLines * lineHeight + top + bottom;
  
@@ -230,7 +232,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
  		const dimension = new Dimension(this.element.clientWidth - toolbarWidth, editorHeight);
  
  		if (dimension.width < 0) {
-@@ -810,6 +851,264 @@ export class SCMInputWidget {
+@@ -810,6 +853,267 @@ export class SCMInputWidget {
  		});
  	}
  
@@ -241,6 +243,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		this.projectItems = [];
 +		this.projectListItems = [];
 +		this.currentProjectNumber = undefined;
++		this.projectNoneSelected = false;
 +
 +		// Remove old list from body
 +		this.projectList?.remove();
@@ -253,7 +256,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		const comboInput = document.createElement('input');
 +		comboInput.type = 'text';
 +		comboInput.className = 'scm-project-combobox';
-+		comboInput.placeholder = localize('scmInput.searchProject', "Search project number or name...");
++		comboInput.placeholder = localize('scmInput.searchProject', "搜索并选择看板卡片");
 +		comboInput.value = '';
 +		this.projectSelectorContainer.appendChild(comboInput);
 +
@@ -268,10 +271,10 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +			e.stopPropagation();
 +		}, true)); // capture phase
 +
-+		// "(No Project Number)" option (always present)
++		// "无看板卡片" option (always present)
 +		const noneItem = document.createElement('div');
 +		noneItem.className = 'scm-project-list-item';
-+		noneItem.textContent = localize('scmInput.noProjectNumber', "(No Project Number)");
++		noneItem.textContent = `（${this.noneProjectText}）`;
 +		noneItem.dataset.number = '';
 +		list.appendChild(noneItem);
 +
@@ -285,13 +288,8 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +			if (list.style.display === 'block') {
 +				// Close: hide list, restore display
 +				list.style.display = 'none';
-+				comboInput.readOnly = true;
-+				if (this.currentProjectNumber) {
-+					const found = this.projectItems.find(i => i.number === this.currentProjectNumber);
-+					comboInput.value = found
-+						? (found.description ? `${found.label}(${found.description})` : found.label)
-+						: this.currentProjectNumber;
-+				}
++				this._restoreComboDisplay(comboInput);
++				comboInput.readOnly = true; // stay locked until the list is opened again
 +				setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +			} else {
 +				// Open: load fresh data then show
@@ -301,7 +299,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +				this._clearProjectListItems();
 +				const loadingEl = document.createElement('div');
 +				loadingEl.className = 'scm-project-list-item loading';
-+				loadingEl.textContent = 'Loading...';
++				loadingEl.textContent = '加载中...';
 +				list.appendChild(loadingEl);
 +				list.style.display = 'block';
 +				setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
@@ -339,18 +337,19 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +			e.preventDefault(); // prevent input blur
 +			const target = (e.target as HTMLElement).closest('.scm-project-list-item') as HTMLElement | null;
 +			if (!target) { return; }
++			if (target.classList.contains('loading')) {
++				return; // the transient loading row carries no data-number and must not count as "无看板卡片"
++			}
 +			const selectedNumber = target.dataset.number ?? '';
 +			list.style.display = 'none';
 +			this._itemJustSelected = true;
 +			setTimeout(() => { this._itemJustSelected = false; }, 200);
 +			setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +			this._onProjectNumberChanged(selectedNumber, textModel);
-+			// Set combobox display text and lock as read-only
-+			const found = this.projectItems.find(i => i.number === selectedNumber);
-+			comboInput.value = found
-+				? (found.description ? `${found.label}(${found.description})` : found.label)
-+				: selectedNumber;
-+			comboInput.readOnly = !!selectedNumber;
++			// Reflect the selection in the combobox and lock it as read-only
++			this.projectNoneSelected = selectedNumber === '';
++			this._restoreComboDisplay(comboInput);
++			comboInput.readOnly = true;
 +		}));
 +
 +		// On blur: close dropdown and restore display text
@@ -359,15 +358,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +				list.style.display = 'none';
 +				setTimeout(() => { this.layout(); this._positionProjectList(); this._onDropdownVisibilityChanged.fire(); }, 0);
 +			}
-+			if (this.currentProjectNumber) {
-+				const found = this.projectItems.find(i => i.number === this.currentProjectNumber);
-+				comboInput.value = found
-+					? (found.description ? `${found.label}(${found.description})` : found.label)
-+					: this.currentProjectNumber;
-+			} else {
-+				comboInput.value = '';
-+			}
-+			comboInput.readOnly = !!this.currentProjectNumber;
++			this._restoreComboDisplay(comboInput);
 +		}));
 +
 +		// Parse initial text for existing project number
@@ -375,8 +366,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		const parsed = this._parseProjectNumber(initialText);
 +		if (parsed) {
 +			this.currentProjectNumber = parsed;
-+			comboInput.value = parsed;
-+			comboInput.readOnly = true;
++			this._restoreComboDisplay(comboInput); // projectItems are not loaded yet → falls back to the bare number
 +		} else if (/^[A-Za-z0-9-]+\s+#comment\b/.test(initialText)) {
 +			// Strip orphaned prefix from previous repo (projectItems not loaded yet)
 +			const cleaned = initialText.replace(/^[A-Za-z0-9-]+\s+#comment\s*/, '');
@@ -397,9 +387,27 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		this.projectList.style.width = `${comboRect.width}px`;
 +	}
 +
++	/** Restore combobox display text and lock state from the current selection. */
++	private _restoreComboDisplay(comboInput: HTMLInputElement): void {
++		if (this.currentProjectNumber) {
++			const found = this.projectItems.find(i => i.number === this.currentProjectNumber);
++			comboInput.value = found
++				? (found.description ? `${found.label}(${found.description})` : found.label)
++				: this.currentProjectNumber;
++			comboInput.readOnly = true;
++		} else if (this.projectNoneSelected) {
++			// "无看板卡片" was explicitly chosen: show it instead of the search hint
++			comboInput.value = this.noneProjectText;
++			comboInput.readOnly = true;
++		} else {
++			comboInput.value = '';
++			comboInput.readOnly = false;
++		}
++	}
++
 +	private _filterProjectList(query: string): void {
 +		const lowerQuery = query.toLowerCase();
-+		// Filter "(No Project Number)" item
++		// Filter the "无看板卡片" item
 +		const noneEl = this.projectList
 +			? this.projectList.querySelector('.scm-project-list-item[data-number=""]') as HTMLElement | null
 +			: null;
@@ -428,7 +436,7 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +	}
 +
 +	private _clearProjectListItems(): void {
-+		// Remove all dynamically created list items (keep the "(No Project Number)" option)
++		// Remove all dynamically created list items (keep the "无看板卡片" option)
 +		const items = this.projectList
 +			? this.projectList.querySelectorAll('.scm-project-list-item:not([data-number=""])')
 +			: document.querySelectorAll('.scm-project-list-item:not([data-number=""])');
@@ -479,16 +487,13 @@ Index: code-server/lib/vscode/src/vs/workbench/contrib/scm/browser/scmInput.ts
 +		const parsed = this._parseProjectNumber(text);
 +		if (parsed !== this.currentProjectNumber) {
 +			this.currentProjectNumber = parsed;
++			if (!parsed) {
++				// Prefix removed by hand: go back to the "nothing chosen yet" state
++				this.projectNoneSelected = false;
++			}
 +			const comboInput = this.projectSelectorContainer.querySelector('.scm-project-combobox') as HTMLInputElement | null;
 +			if (!comboInput) { return; }
-+			if (parsed) {
-+				const found = this.projectItems.find(i => i.number === parsed);
-+				comboInput.value = found
-+					? (found.description ? `${found.label}(${found.description})` : found.label)
-+					: parsed;
-+			} else {
-+				comboInput.value = '';
-+			}
++			this._restoreComboDisplay(comboInput);
 +		}
 +	}
 +
